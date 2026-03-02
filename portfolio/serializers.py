@@ -2,11 +2,14 @@ from rest_framework import serializers
 from .models import Sector, Stock, Portfolio
 
 class StockSerializer(serializers.ModelSerializer):
+    sector_name = serializers.CharField(source='sector.name', read_only=True)
+    sector_id = serializers.IntegerField(source='sector.id', read_only=True)
+
     class Meta:
         model = Stock
         fields = [
-            'id', 'symbol', 'company_name', 'pe_ratio', 
-            'current_price', 'fifty_two_week_high', 
+            'id', 'symbol', 'company_name', 'sector_id', 'sector_name',
+            'pe_ratio', 'current_price', 'fifty_two_week_high', 
             'fifty_two_week_low', 'discount_price'
         ]
 

@@ -4,6 +4,17 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from .models import Sector, Stock, Portfolio
 from .serializers import SectorSerializer, StockSerializer, PortfolioSerializer
 
+
+class StockListView(generics.ListAPIView):
+    """
+    API endpoint that returns all stocks across all sectors.
+    Public - no authentication required.
+    """
+    queryset = Stock.objects.select_related('sector').order_by('sector__name', 'symbol')
+    serializer_class = StockSerializer
+    permission_classes = [AllowAny]
+
+
 class SectorListView(generics.ListAPIView):
     """
     API endpoint that returns a list of all 4 sectors.
@@ -37,9 +48,19 @@ class UserPortfolioView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Only return the portfolio items that belong to the user making the request
-        return Portfolio.objects.filter(user=self.request.user)
+        return Portfolio.objects.filter(user=self.request.user).select_related('stock', 'stock__sector')
 
     def perform_create(self, serializer):
-        # When a new stock is added to the portfolio, automatically link it to the requesting user
         serializer.save(user=self.request.user)
+
+
+class PortfolioDetailView(generics.RetrieveDestroyAPIView):
+    """
+    API endpoint to retrieve or delete a single portfolio item.
+    Users can only delete their own portfolio items.
+    """
+    serializer_class = PortfolioSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Portfolio.objects.filter(user=self.request.user)

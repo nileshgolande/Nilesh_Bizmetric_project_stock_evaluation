@@ -3,6 +3,7 @@ from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import AllowAny
 from django.contrib.auth import authenticate
 from rest_framework.authtoken.models import Token
 from .serializers import UserSerializer
@@ -11,6 +12,9 @@ class RegisterView(APIView):
     """
     API endpoint to register a new user.
     """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
     def post(self, request):
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
@@ -29,6 +33,9 @@ class LoginView(APIView):
     """
     API endpoint to log in a user and return an auth token.
     """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
     def post(self, request):
         username = request.data.get('username')
         password = request.data.get('password')
