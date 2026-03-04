@@ -21,6 +21,27 @@ def analyze_stock_eda(symbol):
     if df.empty:
         return {}
 
+    # Build trend data from the 1-year close series. Downsample to keep payload light.
+    trend_df = df[['Close']].copy().reset_index()
+    date_col = trend_df.columns[0]
+    trend_df[date_col] = pd.to_datetime(trend_df[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
+    trend_df = trend_df.dropna(subset=[date_col, 'Close'])
+
+    max_trend_points = 90
+    if len(trend_df) > max_trend_points:
+        sampled = trend_df.iloc[::int(np.ceil(len(trend_df) / max_trend_points))].copy()
+        trend_df = pd.concat([sampled, trend_df.tail(1)], ignore_index=True)
+        trend_df = trend_df.drop_duplicates(subset=[date_col], keep='last')
+
+    trend_df = trend_df.sort_values(by=date_col)
+    trend_graph = [
+        {
+            "date": row[date_col],
+            "close": round(float(row['Close']), 2)
+        }
+        for _, row in trend_df.iterrows()
+    ]
+
     # Calculate daily returns
     df['Daily_Return'] = df['Close'].pct_change()
     
@@ -93,7 +114,8 @@ def analyze_stock_eda(symbol):
         "market_capitalization": {
             "value": market_cap,
             "category": cap_category
-        }
+        },
+        "trend_graph": trend_graph
     }
     
     return results
