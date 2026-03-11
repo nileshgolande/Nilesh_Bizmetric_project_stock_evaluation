@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from django.core.cache import cache
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
@@ -13,12 +14,13 @@ def get_stock_eda(request, symbol):
     """
     API endpoint that takes a stock symbol, performs EDA, 
     and returns the results as JSON.
+    Includes caching for improved performance.
     """
     try:
         # Ensure the symbol is uppercase for consistency
         symbol = symbol.upper()
         
-        # Call your EDA function
+        # Call your EDA function (which now includes caching)
         eda_results = analyze_stock_eda(symbol)
         
         # Check if results are empty (e.g., invalid ticker)

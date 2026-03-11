@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Link, useLocation, useParams } from 'react-router-dom';
+import PredictionGraph from './PredictionGraph';
+import { LoadingSpinner } from './LoadingSpinner';
 import './Login.css';
 
 const API_BASE = 'http://127.0.0.1:8000/api';
@@ -87,8 +89,11 @@ const StockAnalyticsPage = () => {
   const { symbol = '' } = useParams();
   const normalizedSymbol = symbol.toUpperCase();
   const [analytics, setAnalytics] = useState(null);
+  const [predictions, setPredictions] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [predictionsLoading, setPredictionsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [predictionsError, setPredictionsError] = useState('');
   const [stockInfo, setStockInfo] = useState(location.state?.stock || null);
   const trendChart = analytics ? buildTrendChart(analytics.trend_graph) : null;
 
@@ -115,8 +120,30 @@ const StockAnalyticsPage = () => {
       }
     };
 
+    const fetchPredictions = async () => {
+      setPredictionsLoading(true);
+      setPredictionsError('');
+      
+      try {
+        const config = token ? { headers: { Authorization: `Token ${token}` } } : undefined;
+        const response = await axios.get(
+          `${API_BASE}/predictions/stock/${encodeURIComponent(normalizedSymbol)}/?days=7`,
+          config
+        );
+        setPredictions(response.data);
+      } catch (err) {
+        const errorMsg = err.response?.data?.error
+          || err.response?.data?.details
+          || 'Unable to load predictions for this stock.';
+        setPredictionsError(errorMsg);
+      } finally {
+        setPredictionsLoading(false);
+      }
+    };
+
     if (normalizedSymbol) {
       fetchAnalytics();
+      fetchPredictions();
     } else {
       setError('Missing stock symbol.');
       setLoading(false);
@@ -154,7 +181,11 @@ const StockAnalyticsPage = () => {
         </p>
       </header>
 
-      {loading && <div className="analytics-state">Loading analytics...</div>}
+      {loading && (
+        <div className="analytics-state">
+          <LoadingSpinner text="Loading analytics..." />
+        </div>
+      )}
       {!loading && error && <div className="analytics-error">{error}</div>}
 
       {!loading && analytics && !error && (
@@ -200,8 +231,96 @@ const StockAnalyticsPage = () => {
               </div>
             </div>
           ) : (
-            <div className="analytics-state">Trend graph data is unavailable for this stock.</div>
+            <div className="analytics-state">Trend graph data is unavailable for this stock.            </div>
           )}
+
+          {/* 7-Day Predictions Section */}
+          <div style={{ marginTop: '2rem', marginBottom: '2rem' }}>
+            <div className="stock-analytics-header" style={{ marginBottom: '1.5rem' }}>
+              <h2>7-Day Price Predictions</h2>
+              <span className="selected-symbol">AI Forecast Models</span>
+            </div>
+            
+            {predictionsLoading && (
+              <div className="analytics-state">
+                <LoadingSpinner text="Generating AI predictions..." />
+              </div>
+            )}
+            
+            {predictionsError && (
+              <div className="analytics-error">
+                {predictionsError}
+                <button
+                  onClick={() => {
+                    setPredictionsError('');
+                    const config = token ? { headers: { Authorization: `Token ${token}` } } : undefined;
+                    axios.get(
+                      `${API_BASE}/predictions/stock/${encodeURIComponent(normalizedSymbol)}/?days=7`,
+                      config
+                    )
+                    .then(res => setPredictions(res.data))
+                    .catch(err => setPredictionsError(err.response?.data?.error || 'Failed to load predictions'));
+                  }}
+                  className="btn-secondary"
+                  style={{ marginTop: '1rem' }}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            
+            {!predictionsLoading && predictions && !predictionsError && (
+              <>
+                <PredictionGraph data={predictions} />
+                
+                {/* 7-Day Predictions Summary Table */}
+                <div style={{ marginTop: '2rem', background: 'var(--bg-card)', borderRadius: '12px', padding: '1.5rem', border: '1px solid var(--border-primary)' }}>
+                  <h3 style={{ color: 'var(--accent-primary)', marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 700 }}>7-Day Forecast Summary</h3>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid rgba(0, 229, 255, 0.1)' }}>
+                          <th style={{ padding: '0.75rem', textAlign: 'left', color: 'var(--accent-primary)', fontSize: '0.85rem', fontWeight: 700 }}>Day</th>
+                          <th style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--accent-primary)', fontSize: '0.85rem', fontWeight: 700 }}>LR Prediction</th>
+                          <th style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--accent-primary)', fontSize: '0.85rem', fontWeight: 700 }}>CNN Prediction</th>
+                          <th style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--accent-primary)', fontSize: '0.85rem', fontWeight: 700 }}>RNN Prediction</th>
+                          <th style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--accent-primary)', fontSize: '0.85rem', fontWeight: 700 }}>Avg Forecast</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {predictions
+                          .filter(p => p.is_future)
+                          .map((pred, idx) => {
+                            const avg = (
+                              (pred.lr_prediction + pred.cnn_prediction + pred.rnn_prediction) / 3
+                            ).toFixed(2);
+                            return (
+                              <tr key={idx} style={{ borderBottom: '1px solid rgba(0, 229, 255, 0.05)' }}>
+                                <td style={{ padding: '0.75rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                  {pred.label || `Day ${idx + 1}`}
+                                </td>
+                                <td style={{ padding: '0.75rem', textAlign: 'right', color: '#F59E0B', fontFamily: 'monospace' }}>
+                                  {formatCurrency(pred.lr_prediction)}
+                                </td>
+                                <td style={{ padding: '0.75rem', textAlign: 'right', color: '#10B981', fontFamily: 'monospace' }}>
+                                  {formatCurrency(pred.cnn_prediction)}
+                                </td>
+                                <td style={{ padding: '0.75rem', textAlign: 'right', color: '#8B5CF6', fontFamily: 'monospace' }}>
+                                  {formatCurrency(pred.rnn_prediction)}
+                                </td>
+                                <td style={{ padding: '0.75rem', textAlign: 'right', color: 'var(--accent-primary)', fontFamily: 'monospace', fontWeight: 700 }}>
+                                  {formatCurrency(avg)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
 
           <div className="analytics-grid">
             <div className="analytics-card">

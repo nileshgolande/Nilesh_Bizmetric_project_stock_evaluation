@@ -32,6 +32,7 @@ class Portfolio(models.Model):
     
     # Connects the portfolio to the Stock table using a Foreign Key
     stock = models.ForeignKey(Stock, on_delete=models.CASCADE, related_name='in_portfolios')
+    portfolio_name = models.CharField(max_length=100, default='General')
     
     added_on = models.DateTimeField(auto_now_add=True)
 
@@ -40,4 +41,4 @@ class Portfolio(models.Model):
         unique_together = ('user', 'stock')
 
     def __str__(self):
-        return f"{self.user.username} - {self.stock.symbol}"
+        return f"{self.user.username} - {self.portfolio_name} - {self.stock.symbol}"

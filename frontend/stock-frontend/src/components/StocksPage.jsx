@@ -204,11 +204,18 @@ const StocksPage = () => {
       return;
     }
 
+    const portfolioSector = activeSectors.length === 1
+      ? activeSectors[0]
+      : (activeSectors.length > 1 ? stock.sector_name : null);
+
     setQuickAdding(stock.symbol);
     try {
       await axios.post(
         `${API_BASE}/my-portfolio/add-stock/`,
-        { symbol: stock.symbol },
+        {
+          symbol: stock.symbol,
+          portfolio_sector: portfolioSector,
+        },
         { headers: authHeaders }
       );
       setQuickAdded(stock.symbol);

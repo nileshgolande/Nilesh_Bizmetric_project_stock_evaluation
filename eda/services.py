@@ -1,10 +1,14 @@
+from django.core.cache import cache
 import yfinance as yf
 import pandas as pd
 import numpy as np
 
+EDA_CACHE_TTL_SECONDS = 600  # Cache EDA results for 10 minutes
+
 def analyze_stock_eda(symbol):
     """
     Fetches 1 year of historical stock data and calculates key EDA metrics.
+    Uses caching to improve performance.
     
     Args:
         symbol (str): The stock ticker symbol (e.g., 'AAPL').
@@ -12,6 +16,12 @@ def analyze_stock_eda(symbol):
     Returns:
         dict: A dictionary containing the calculated metrics, or an empty dict if data is not found.
     """
+    # Check cache first
+    cache_key = f"eda_analysis:{symbol.upper()}"
+    cached_result = cache.get(cache_key)
+    if cached_result is not None:
+        return cached_result
+    
     ticker = yf.Ticker(symbol)
     
     # Pull 1 year of historical data
@@ -118,4 +128,6 @@ def analyze_stock_eda(symbol):
         "trend_graph": trend_graph
     }
     
+    # Cache the results
+    cache.set(cache_key, results, EDA_CACHE_TTL_SECONDS)
     return results

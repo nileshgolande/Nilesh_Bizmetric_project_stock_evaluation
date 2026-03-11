@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Sector, Stock, Portfolio
 from .services import fetch_live_snapshot
+from .recommendations import build_portfolio_recommendation_map, get_base_signal_for_symbol
 
 class StockSerializer(serializers.ModelSerializer):
     sector_name = serializers.CharField(source='sector.name', read_only=True)
@@ -106,6 +107,7 @@ class PortfolioStockSerializer(serializers.ModelSerializer):
 class PortfolioSerializer(serializers.ModelSerializer):
     # We can include the stock details nested inside the portfolio response
     stock_details = PortfolioStockSerializer(source='stock', read_only=True)
+    portfolio_name = serializers.CharField(read_only=True)
     symbol = serializers.CharField(source='stock.symbol', read_only=True)
     company_name = serializers.SerializerMethodField()
     live_price = serializers.SerializerMethodField()
@@ -113,6 +115,20 @@ class PortfolioSerializer(serializers.ModelSerializer):
     market_cap = serializers.SerializerMethodField()
     sparkline_7d = serializers.SerializerMethodField()
     price_direction = serializers.SerializerMethodField()
+    annualized_return = serializers.SerializerMethodField()
+    volatility = serializers.SerializerMethodField()
+    cluster_label = serializers.SerializerMethodField()
+    predicted_price_7d = serializers.SerializerMethodField()
+    forecast_line_7d = serializers.SerializerMethodField()
+    rsi_14 = serializers.SerializerMethodField()
+    buy_signal = serializers.SerializerMethodField()
+    lr_forecast_2d = serializers.SerializerMethodField()
+    logistic_signal = serializers.SerializerMethodField()
+    cnn_next_2_days = serializers.SerializerMethodField()
+    rnn_next_2_days = serializers.SerializerMethodField()
+    logistic_accuracy = serializers.SerializerMethodField()
+    cnn_rmse = serializers.SerializerMethodField()
+    rnn_rmse = serializers.SerializerMethodField()
 
     def _get_live_snapshot(self, obj):
         cache = self.context.setdefault('_live_snapshot_cache', {})
@@ -125,6 +141,69 @@ class PortfolioSerializer(serializers.ModelSerializer):
             except Exception:
                 cache[symbol] = {}
         return cache[symbol]
+
+    def _get_recommendation_map(self):
+        recommendation_map = self.context.get('_portfolio_recommendation_map')
+        if recommendation_map is not None:
+            return recommendation_map
+
+        incoming_map = self.context.get('portfolio_recommendation_map')
+        if incoming_map is not None:
+            self.context['_portfolio_recommendation_map'] = incoming_map
+            return incoming_map
+
+        symbols = []
+        instance = getattr(self, 'instance', None)
+        if instance is not None:
+            try:
+                symbols = [
+                    item.stock.symbol
+                    for item in instance
+                    if getattr(item, 'stock', None) and getattr(item.stock, 'symbol', None)
+                ]
+            except TypeError:
+                stock = getattr(instance, 'stock', None)
+                if stock and getattr(stock, 'symbol', None):
+                    symbols = [stock.symbol]
+
+        recommendation_map = build_portfolio_recommendation_map(symbols)
+        self.context['_portfolio_recommendation_map'] = recommendation_map
+        return recommendation_map
+
+    def _get_recommendation_metrics(self, obj):
+        symbol = getattr(obj.stock, 'symbol', '').upper()
+        recommendation_map = self._get_recommendation_map()
+        if symbol in recommendation_map:
+            return recommendation_map[symbol]
+
+        base_signal = get_base_signal_for_symbol(symbol)
+        cluster_label = 'Underperformers'
+        if base_signal.get('annualized_return') is not None and base_signal.get('annualized_return') >= 0:
+            cluster_label = 'Safe Haven' if (base_signal.get('volatility') or 0) <= 22 else 'Aggressive Growth'
+
+        predicted = base_signal.get('predicted_price_7d')
+        current_price = base_signal.get('current_price')
+        rsi_14 = base_signal.get('rsi_14')
+        predicted_positive = (
+            current_price is not None
+            and current_price > 0
+            and predicted is not None
+            and predicted > current_price * 1.05
+        )
+        cluster_positive = cluster_label in {'Safe Haven', 'Aggressive Growth'}
+
+        if predicted_positive and rsi_14 is not None and rsi_14 < 40 and cluster_positive:
+            buy_signal = True
+        elif cluster_label == 'Underperformers' or (rsi_14 is not None and rsi_14 > 70):
+            buy_signal = False
+        else:
+            buy_signal = False
+
+        return {
+            **base_signal,
+            'cluster_label': cluster_label,
+            'buy_signal': buy_signal,
+        }
 
     def get_company_name(self, obj):
         return getattr(obj.stock, 'company_name', None) or obj.stock.symbol
@@ -157,14 +236,65 @@ class PortfolioSerializer(serializers.ModelSerializer):
             return 'down'
         return 'neutral'
 
+    def get_annualized_return(self, obj):
+        return self._get_recommendation_metrics(obj).get('annualized_return')
+
+    def get_volatility(self, obj):
+        return self._get_recommendation_metrics(obj).get('volatility')
+
+    def get_cluster_label(self, obj):
+        return self._get_recommendation_metrics(obj).get('cluster_label')
+
+    def get_predicted_price_7d(self, obj):
+        return self._get_recommendation_metrics(obj).get('predicted_price_7d')
+
+    def get_forecast_line_7d(self, obj):
+        return self._get_recommendation_metrics(obj).get('forecast_line_7d') or []
+
+    def get_rsi_14(self, obj):
+        return self._get_recommendation_metrics(obj).get('rsi_14')
+
+    def get_buy_signal(self, obj):
+        return bool(self._get_recommendation_metrics(obj).get('buy_signal'))
+
+    def get_lr_forecast_2d(self, obj):
+        return self._get_recommendation_metrics(obj).get('lr_forecast_2d') or [None, None]
+
+    def get_logistic_signal(self, obj):
+        return self._get_recommendation_metrics(obj).get('logistic_signal')
+
+    def get_cnn_next_2_days(self, obj):
+        return self._get_recommendation_metrics(obj).get('cnn_next_2_days') or [None, None]
+
+    def get_rnn_next_2_days(self, obj):
+        return self._get_recommendation_metrics(obj).get('rnn_next_2_days') or [None, None]
+
+    def get_logistic_accuracy(self, obj):
+        return self._get_recommendation_metrics(obj).get('logistic_accuracy')
+
+    def get_cnn_rmse(self, obj):
+        return self._get_recommendation_metrics(obj).get('cnn_rmse')
+
+    def get_rnn_rmse(self, obj):
+        return self._get_recommendation_metrics(obj).get('rnn_rmse')
+
     class Meta:
         model = Portfolio
         fields = [
-            'id', 'user', 'stock', 'stock_details', 'symbol', 'company_name',
+            'id', 'user', 'stock', 'portfolio_name', 'stock_details', 'symbol', 'company_name',
             'live_price', 'day_change_percent', 'market_cap', 'sparkline_7d',
-            'price_direction', 'added_on'
+            'price_direction', 'annualized_return', 'volatility', 'cluster_label',
+            'predicted_price_7d', 'forecast_line_7d', 'rsi_14',
+            'buy_signal', 'added_on', 'lr_forecast_2d',
+            'logistic_signal', 'cnn_next_2_days', 'rnn_next_2_days',
+            'logistic_accuracy', 'cnn_rmse', 'rnn_rmse'
         ]
         read_only_fields = [
-            'user', 'symbol', 'company_name', 'live_price', 'day_change_percent',
-            'market_cap', 'sparkline_7d', 'price_direction'
+            'user', 'portfolio_name', 'symbol', 'company_name', 'live_price', 'day_change_percent',
+            'market_cap', 'sparkline_7d', 'price_direction',
+            'annualized_return', 'volatility', 'cluster_label',
+            'predicted_price_7d', 'forecast_line_7d', 'rsi_14',
+            'buy_signal', 'lr_forecast_2d',
+            'logistic_signal', 'cnn_next_2_days', 'rnn_next_2_days',
+            'logistic_accuracy', 'cnn_rmse', 'rnn_rmse'
         ]

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import { Plus } from 'lucide-react';
+import AddToPortfolioModal from './AddToPortfolioModal';
 import './Login.css';
 
 const API_BASE = 'http://127.0.0.1:8000/api';
@@ -34,6 +36,10 @@ const Dashboard = () => {
   const [analytics, setAnalytics] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState('');
+  const [showAddPortfolioModal, setShowAddPortfolioModal] = useState(false);
+  const [stockToAdd, setStockToAdd] = useState(null);
+  
+  const token = localStorage.getItem('token');
 
   useEffect(() => {
     const fetchSectors = async () => {
@@ -164,7 +170,22 @@ const Dashboard = () => {
                 className={`stock-row ${selectedStock?.id === stock.id ? 'is-selected' : ''}`}
                 onClick={() => fetchStockAnalytics(stock)}
               >
-                <span className="symbol-badge">{stock.symbol}</span>
+                <div className="flex items-center gap-3">
+                  <span className="symbol-badge">{stock.symbol}</span>
+                  {token && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setStockToAdd(stock);
+                        setShowAddPortfolioModal(true);
+                      }}
+                      className="p-1 hover:bg-gray-700 rounded-full text-blue-400 transition-colors"
+                      title="Add to Portfolio"
+                    >
+                      <Plus size={16} />
+                    </button>
+                  )}
+                </div>
 
                 <div className="flex gap-4">
                   <div className="metric-card bg-blue-metric">
@@ -240,6 +261,19 @@ const Dashboard = () => {
             )}
           </section>
         </div>
+      )}
+
+      {showAddPortfolioModal && stockToAdd && (
+        <AddToPortfolioModal
+          stock={stockToAdd}
+          defaultPortfolioName={selectedSector?.name}
+          onClose={() => setShowAddPortfolioModal(false)}
+          onSuccess={(portfolioName) => {
+            // Optional: Show a toast notification or update state if needed
+            alert(`Added ${stockToAdd.symbol} to ${portfolioName} portfolio!`);
+            setShowAddPortfolioModal(false);
+          }}
+        />
       )}
     </div>
   );

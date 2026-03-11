@@ -8,16 +8,75 @@ from rest_framework.views import APIView
 from .models import Sector, Stock, Portfolio
 from .serializers import SectorSerializer, StockSerializer, PortfolioSerializer
 from .services import search_tickers, fetch_live_snapshot, fetch_market_pulse, fetch_market_ticker
+from .recommendations import build_portfolio_recommendation_map
+
+DEFAULT_PORTFOLIO_NAME = 'General'
+
+
+def normalize_portfolio_name(value):
+    normalized = str(value or '').strip()
+    if not normalized:
+        return DEFAULT_PORTFOLIO_NAME
+    return normalized[:100]
 
 
 class StockListView(generics.ListAPIView):
     """
     API endpoint that returns all stocks across all sectors.
     Public - no authentication required.
+    Supports pagination and optional live data enrichment.
     """
     queryset = Stock.objects.select_related('sector').order_by('sector__name', 'symbol')
     serializer_class = StockSerializer
     permission_classes = [AllowAny]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # Optional filtering by sector
+        sector_id = self.request.query_params.get('sector_id')
+        if sector_id:
+            queryset = queryset.filter(sector_id=sector_id)
+        return queryset
+    
+    def list(self, request, *args, **kwargs):
+        # Check if live data is requested
+        include_live = request.query_params.get('include_live', 'false').lower() == 'true'
+        
+        response = super().list(request, *args, **kwargs)
+        
+        # Optionally enrich with live data (can be slow, so make it optional)
+        if include_live and response.data:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            import threading
+            
+            results = response.data.get('results', response.data) if isinstance(response.data, dict) else response.data
+            
+            def enrich_stock(stock_data):
+                symbol = stock_data.get('symbol')
+                if not symbol:
+                    return stock_data
+                try:
+                    snapshot = fetch_live_snapshot(symbol, include_metadata=False)
+                    stock_data['live_price'] = snapshot.get('current_price')
+                    stock_data['day_change_percent'] = snapshot.get('day_change_percent')
+                    stock_data['sparkline_7d'] = snapshot.get('sparkline_7d', [])
+                    stock_data['market_cap'] = snapshot.get('market_cap')
+                except Exception:
+                    pass  # Keep original data if live fetch fails
+                return stock_data
+            
+            # Use threading for parallel fetching (limit to 10 concurrent requests)
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {executor.submit(enrich_stock, stock): stock for stock in results[:50]}  # Limit to first 50 for performance
+                for future in as_completed(futures):
+                    pass  # Results are modified in place
+            
+            if isinstance(response.data, dict):
+                response.data['results'] = results
+            else:
+                response.data = results
+        
+        return response
 
 
 class StockSearchView(APIView):
@@ -81,7 +140,38 @@ class UserPortfolioView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Portfolio.objects.filter(user=self.request.user).select_related('stock', 'stock__sector').order_by('-added_on')
+        return Portfolio.objects.filter(user=self.request.user).select_related('stock', 'stock__sector').order_by('portfolio_name', '-added_on')
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        symbols = list(self.get_queryset().values_list('stock__symbol', flat=True))
+        context['portfolio_recommendation_map'] = build_portfolio_recommendation_map(symbols)
+        return context
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        items = list(serializer.data)
+
+        grouped_portfolios = {}
+        for item in items:
+            portfolio_name = normalize_portfolio_name(item.get('portfolio_name'))
+            grouped_portfolios.setdefault(portfolio_name, []).append(item)
+
+        portfolio_names = sorted(
+            grouped_portfolios.keys(),
+            key=lambda name: (name.lower() != DEFAULT_PORTFOLIO_NAME.lower(), name.lower())
+        )
+        ordered_grouped_portfolios = {name: grouped_portfolios[name] for name in portfolio_names}
+
+        return Response(
+            {
+                'portfolios': ordered_grouped_portfolios,
+                'portfolio_names': portfolio_names,
+                'items': items,
+            },
+            status=status.HTTP_200_OK
+        )
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -96,6 +186,9 @@ class AddStockToPortfolioView(APIView):
 
     def post(self, request):
         symbol = (request.data.get('symbol') or request.data.get('ticker') or '').strip().upper()
+        portfolio_name = normalize_portfolio_name(
+            request.data.get('portfolio_sector') or request.data.get('portfolio_name')
+        )
         if not symbol:
             return Response(
                 {'error': 'Ticker symbol is required.'},
@@ -132,15 +225,32 @@ class AddStockToPortfolioView(APIView):
             }
         )
 
+        moved = False
         try:
-            portfolio_item, created = Portfolio.objects.get_or_create(user=request.user, stock=stock_obj)
+            portfolio_item, created = Portfolio.objects.get_or_create(
+                user=request.user,
+                stock=stock_obj,
+                defaults={'portfolio_name': portfolio_name},
+            )
         except IntegrityError:
             portfolio_item = Portfolio.objects.get(user=request.user, stock=stock_obj)
             created = False
 
-        serializer = PortfolioSerializer(portfolio_item, context={'request': request})
+        if not created and portfolio_item.portfolio_name != portfolio_name:
+            portfolio_item.portfolio_name = portfolio_name
+            portfolio_item.save(update_fields=['portfolio_name'])
+            moved = True
+
+        recommendation_map = build_portfolio_recommendation_map([stock_obj.symbol])
+        serializer = PortfolioSerializer(
+            portfolio_item,
+            context={
+                'request': request,
+                'portfolio_recommendation_map': recommendation_map,
+            },
+        )
         return Response(
-            {'created': created, 'item': serializer.data},
+            {'created': created, 'moved': moved, 'item': serializer.data},
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
         )
 
@@ -181,3 +291,10 @@ class PortfolioDetailView(generics.RetrieveDestroyAPIView):
 
     def get_queryset(self):
         return Portfolio.objects.filter(user=self.request.user)
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        obj = self.get_object()
+        symbol = getattr(getattr(obj, 'stock', None), 'symbol', None)
+        context['portfolio_recommendation_map'] = build_portfolio_recommendation_map([symbol] if symbol else [])
+        return context

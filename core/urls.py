@@ -16,9 +16,27 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from pathlib import Path
+from src.api.prediction_api import predict_ticker
+
+def serve_index(request):
+    """Serve the index.html file directly"""
+    base_dir = Path(__file__).resolve().parent
+    index_path = base_dir / 'index.html'
+    
+    if index_path.exists():
+        with open(index_path, 'r', encoding='utf-8') as f:
+            from django.http import HttpResponse
+            return HttpResponse(f.read(), content_type='text/html')
+    else:
+        from django.http import HttpResponseNotFound
+        return HttpResponseNotFound("Index file not found")
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('', serve_index, name='home'),
+    path('api/predict/<str:ticker>/', predict_ticker, name='predict_ticker'),
+    path('api/predictions/', include('predictions.urls')),
     # Routes all our portfolio API endpoints under the /api/ prefix
     path('api/', include('portfolio.urls')), 
     path('api/eda/', include('eda.urls')),

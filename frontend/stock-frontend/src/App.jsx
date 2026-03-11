@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom';
+import { TrendingUp, ChevronDown, ChevronRight } from 'lucide-react';
+import { useMarketTicker } from './hooks/useStocks';
+import ThemeToggle from './components/ThemeToggle';
 import StocksPage from './components/StocksPage';
+import StocksPageOptimized from './components/StocksPageOptimized';
 import StockAnalyticsPage from './components/StockAnalyticsPage';
 import AuthPage from './components/AuthPage';
 import Portfolio from './components/Portfolio';
+import PredictionsPage from './components/PredictionsPage';
 
 const API_BASE = 'http://127.0.0.1:8000/api';
 
@@ -33,30 +38,17 @@ const tickerClassName = (value) => {
 };
 
 const AppLayout = ({ token, setToken }) => {
-  const [tickerItems, setTickerItems] = useState([]);
+  const [predictionsOpen, setPredictionsOpen] = useState(false);
+  const location = useLocation();
+  
+  // Use React Query for market ticker (auto-refreshes)
+  const { data: tickerItems = [] } = useMarketTicker();
 
   useEffect(() => {
-    let mounted = true;
-    let intervalId = null;
-
-    const fetchTicker = async () => {
-      try {
-        const res = await axios.get(`${API_BASE}/market/ticker/`);
-        const data = Array.isArray(res.data) ? res.data : [];
-        if (mounted) setTickerItems(data);
-      } catch {
-        if (mounted) setTickerItems([]);
-      }
-    };
-
-    fetchTicker();
-    intervalId = setInterval(fetchTicker, 45000);
-
-    return () => {
-      mounted = false;
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, []);
+    if (location.pathname.startsWith('/predictions')) {
+      setPredictionsOpen(true);
+    }
+  }, [location.pathname]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -74,6 +66,11 @@ const AppLayout = ({ token, setToken }) => {
         </div>
 
         <nav className="sidebar-nav">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Navigation</span>
+            <ThemeToggle />
+          </div>
+          
           <NavLink to="/" className={({ isActive }) => `sidebar-link ${isActive ? 'is-active' : ''}`}>
             <span className="sidebar-link-icon">M</span>
             <span>Market Explorer</span>
@@ -83,6 +80,36 @@ const AppLayout = ({ token, setToken }) => {
             <span className="sidebar-link-icon">P</span>
             <span>My Portfolio</span>
           </NavLink>
+
+          {token && (
+            <div className="sidebar-group">
+              <button
+                onClick={() => setPredictionsOpen(!predictionsOpen)}
+                className={`sidebar-link w-full flex justify-between items-center cursor-pointer ${predictionsOpen ? 'is-active' : ''}`}
+                style={{ background: 'transparent', border: 'none', padding: '10px 15px', display: 'flex', alignItems: 'center' }}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="sidebar-link-icon"><TrendingUp size={18} /></span>
+                  <span style={{ fontSize: '14px', fontWeight: 500 }}>Predictions</span>
+                </div>
+                {predictionsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              </button>
+              
+              {predictionsOpen && (
+                <div className="pl-12 pr-4 flex flex-col gap-2 mb-2">
+                  <NavLink to="/predictions/Gold" className={({ isActive }) => `prediction-btn prediction-btn-gold ${isActive ? 'is-active' : ''}`}>
+                    Gold
+                  </NavLink>
+                  <NavLink to="/predictions/Silver" className={({ isActive }) => `prediction-btn prediction-btn-silver ${isActive ? 'is-active' : ''}`}>
+                    Silver
+                  </NavLink>
+                  <NavLink to="/predictions/BTC" className={({ isActive }) => `prediction-btn prediction-btn-btc ${isActive ? 'is-active' : ''}`}>
+                    Bitcoin
+                  </NavLink>
+                </div>
+              )}
+            </div>
+          )}
 
           {!token && (
             <>
@@ -127,8 +154,9 @@ const AppLayout = ({ token, setToken }) => {
         <main className="dashboard-main">
           <section className="glass-panel">
             <Routes>
-              <Route path="/" element={<StocksPage />} />
+              <Route path="/" element={<StocksPageOptimized />} />
               <Route path="/stocks/:symbol" element={<StockAnalyticsPage />} />
+              <Route path="/predictions/:assetType" element={token ? <PredictionsPage /> : <Navigate to="/login" replace />} />
               <Route path="/login" element={<AuthPage setToken={setToken} />} />
               <Route path="/register" element={<AuthPage setToken={setToken} />} />
               <Route

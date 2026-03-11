@@ -1,13 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import './Login.css';
 
 const API_BASE = 'http://127.0.0.1:8000/api';
+const DEFAULT_PORTFOLIO_NAME = 'General';
 
 const toNumber = (value) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+};
+
+const normalizePortfolioName = (value) => {
+  const normalized = String(value || '').trim();
+  return normalized || DEFAULT_PORTFOLIO_NAME;
+};
+
+const sortPortfolioNames = (names) => {
+  const uniqueNames = [...new Set((Array.isArray(names) ? names : []).map(normalizePortfolioName))];
+  return uniqueNames.sort((a, b) => {
+    const aIsDefault = a.toLowerCase() === DEFAULT_PORTFOLIO_NAME.toLowerCase();
+    const bIsDefault = b.toLowerCase() === DEFAULT_PORTFOLIO_NAME.toLowerCase();
+    if (aIsDefault && !bIsDefault) return -1;
+    if (!aIsDefault && bIsDefault) return 1;
+    return a.localeCompare(b);
+  });
 };
 
 const formatCurrency = (value) => {
@@ -37,6 +54,12 @@ const formatSignedPercent = (value) => {
   return `${numeric >= 0 ? '+' : ''}${numeric.toFixed(2)}%`;
 };
 
+const formatPercent = (value) => {
+  const numeric = toNumber(value);
+  if (numeric == null) return 'N/A';
+  return `${numeric.toFixed(2)}%`;
+};
+
 const changeClassName = (value) => {
   const numeric = toNumber(value);
   if (numeric == null) return 'delta-neutral';
@@ -45,12 +68,95 @@ const changeClassName = (value) => {
   return 'delta-neutral';
 };
 
+const recommendationClassName = (recommendation) => {
+  const normalized = String(recommendation || '').toUpperCase();
+  if (normalized === 'STRONG BUY') return 'recommendation-strong-buy';
+  if (normalized === 'SELL/CAUTION') return 'recommendation-sell';
+  return 'recommendation-hold';
+};
+
+const clusterColor = (clusterLabel) => {
+  if (clusterLabel === 'Safe Haven') return '#34d399';
+  if (clusterLabel === 'Aggressive Growth') return '#38bdf8';
+  if (clusterLabel === 'Underperformers') return '#f87171';
+  return '#94a3b8';
+};
+
 const discountClassName = (value) => {
   const numeric = toNumber(value);
   if (numeric == null) return 'delta-neutral';
   return numeric >= 0 ? 'delta-positive' : 'delta-negative';
 };
+const buildScatterPlotModel = (rawPoints, width = 760, height = 320, padding = 48) => {
+  const points = Array.isArray(rawPoints)
+    ? rawPoints
+      .filter((point) => point && point.symbol && point.volatility != null && point.annualizedReturn != null)
+      .map((point) => ({
+        ...point,
+        volatility: Number(point.volatility),
+        annualizedReturn: Number(point.annualizedReturn),
+      }))
+      .filter((point) => Number.isFinite(point.volatility) && Number.isFinite(point.annualizedReturn))
+    : [];
 
+  if (points.length === 0) {
+    return null;
+  }
+
+  const xValues = points.map((point) => point.volatility);
+  const yValues = points.map((point) => point.annualizedReturn);
+  let minX = Math.min(...xValues);
+  let maxX = Math.max(...xValues);
+  let minY = Math.min(...yValues);
+  let maxY = Math.max(...yValues);
+
+  const xRange = maxX - minX || 1;
+  const yRange = maxY - minY || 1;
+  minX -= xRange * 0.1;
+  maxX += xRange * 0.1;
+  minY -= yRange * 0.1;
+  maxY += yRange * 0.1;
+
+  const chartWidth = width - (padding * 2);
+  const chartHeight = height - (padding * 2);
+  const normalizedXRange = maxX - minX || 1;
+  const normalizedYRange = maxY - minY || 1;
+
+  const mapX = (value) => padding + (((value - minX) / normalizedXRange) * chartWidth);
+  const mapY = (value) => (height - padding) - (((value - minY) / normalizedYRange) * chartHeight);
+
+  const tickRatios = [0, 0.25, 0.5, 0.75, 1];
+  const xTicks = tickRatios.map((ratio) => {
+    const value = minX + (normalizedXRange * ratio);
+    return {
+      x: mapX(value),
+      value: Number(value.toFixed(2)),
+    };
+  });
+  const yTicks = tickRatios.map((ratio) => {
+    const value = minY + (normalizedYRange * ratio);
+    return {
+      y: mapY(value),
+      value: Number(value.toFixed(2)),
+    };
+  });
+
+  const mappedPoints = points.map((point) => ({
+    ...point,
+    x: mapX(point.volatility),
+    y: mapY(point.annualizedReturn),
+    color: clusterColor(point.clusterLabel),
+  }));
+
+  return {
+    width,
+    height,
+    padding,
+    xTicks,
+    yTicks,
+    points: mappedPoints,
+  };
+};
 const buildSparkline = (rawPoints, width = 110, height = 36, padding = 4) => {
   const points = Array.isArray(rawPoints)
     ? rawPoints
@@ -94,39 +200,215 @@ const buildSparkline = (rawPoints, width = 110, height = 36, padding = 4) => {
   };
 };
 
-const Portfolio = () => {
-  const token = localStorage.getItem('token');
-  const authHeaders = token ? { Authorization: `Token ${token}` } : {};
+const normalizePortfolioItem = (item, fallbackPortfolioName) => ({
+  ...item,
+  portfolio_name: normalizePortfolioName(item?.portfolio_name || fallbackPortfolioName),
+});
 
-  const [portfolio, setPortfolio] = useState([]);
+const mapPortfoliosFromPayload = (payload) => {
+  const grouped = {};
+
+  const pushItems = (portfolioName, items) => {
+    const normalizedName = normalizePortfolioName(portfolioName);
+    const normalizedItems = (Array.isArray(items) ? items : [])
+      .filter(Boolean)
+      .map((item) => normalizePortfolioItem(item, normalizedName));
+    if (normalizedItems.length === 0) return;
+    grouped[normalizedName] = [...(grouped[normalizedName] || []), ...normalizedItems];
+  };
+
+  if (Array.isArray(payload)) {
+    payload.forEach((item) => pushItems(item?.portfolio_name, [item]));
+    return grouped;
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return grouped;
+  }
+
+  if (payload.portfolios && typeof payload.portfolios === 'object' && !Array.isArray(payload.portfolios)) {
+    Object.entries(payload.portfolios).forEach(([portfolioName, items]) => {
+      pushItems(portfolioName, items);
+    });
+    return grouped;
+  }
+
+  if (Array.isArray(payload.items)) {
+    payload.items.forEach((item) => pushItems(item?.portfolio_name, [item]));
+    return grouped;
+  }
+
+  if (Array.isArray(payload.results)) {
+    payload.results.forEach((item) => pushItems(item?.portfolio_name, [item]));
+  }
+
+  return grouped;
+};
+
+const addOrReplacePortfolioItem = (portfolioMap, item, portfolioNameOverride = null) => {
+  const targetPortfolioName = normalizePortfolioName(portfolioNameOverride || item?.portfolio_name);
+  const normalizedItem = normalizePortfolioItem(item, targetPortfolioName);
+  const cleaned = {};
+
+  Object.entries(portfolioMap).forEach(([portfolioName, items]) => {
+    const filtered = (Array.isArray(items) ? items : []).filter((existingItem) => {
+      if (!existingItem) return false;
+      if (existingItem.id === normalizedItem.id) return false;
+      if (
+        String(existingItem.id).startsWith('tmp-')
+        && String(normalizedItem.id).startsWith('tmp-')
+        && existingItem.symbol === normalizedItem.symbol
+      ) {
+        return false;
+      }
+      if (
+        String(existingItem.id).startsWith('tmp-')
+        && !String(normalizedItem.id).startsWith('tmp-')
+        && existingItem.symbol === normalizedItem.symbol
+      ) {
+        return false;
+      }
+      return true;
+    });
+    if (filtered.length > 0) {
+      cleaned[portfolioName] = filtered;
+    }
+  });
+
+  cleaned[targetPortfolioName] = [normalizedItem, ...(cleaned[targetPortfolioName] || [])];
+  return cleaned;
+};
+
+const removePortfolioItemById = (portfolioMap, portfolioId) => {
+  let removedItem = null;
+  const nextMap = {};
+
+  Object.entries(portfolioMap).forEach(([portfolioName, items]) => {
+    const remainingItems = [];
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      if (item?.id === portfolioId) {
+        removedItem = normalizePortfolioItem(item, portfolioName);
+      } else {
+        remainingItems.push(item);
+      }
+    });
+    if (remainingItems.length > 0) {
+      nextMap[portfolioName] = remainingItems;
+    }
+  });
+
+  return { nextMap, removedItem };
+};
+const Portfolio = () => {
+  const navigate = useNavigate();
+  const [token] = useState(() => localStorage.getItem('token'));
+  const authHeaders = useMemo(() => {
+    const currentToken = localStorage.getItem('token');
+    return currentToken ? { Authorization: `Token ${currentToken}` } : {};
+  }, []);
+  
+  const handleStockClick = (item) => {
+    const symbol = item.symbol || item.stock_details?.symbol;
+    if (symbol) {
+      navigate(`/stocks/${encodeURIComponent(symbol)}`, { 
+        state: { 
+          stock: {
+            symbol,
+            company_name: item.company_name || item.stock_details?.company_name,
+            ...item
+          }
+        } 
+      });
+    }
+  };
+
+  const [portfolios, setPortfolios] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeScatterSymbol, setActiveScatterSymbol] = useState('');
+  const [activePortfolioName, setActivePortfolioName] = useState(DEFAULT_PORTFOLIO_NAME);
 
   const searchRef = useRef(null);
   const searchTimeoutRef = useRef(null);
 
+  const portfolioNames = useMemo(
+    () => sortPortfolioNames(Object.keys(portfolios)),
+    [portfolios]
+  );
+
+  const resolvedActivePortfolioName = useMemo(() => {
+    if (portfolioNames.length === 0) return DEFAULT_PORTFOLIO_NAME;
+    if (portfolioNames.includes(activePortfolioName)) return activePortfolioName;
+    return portfolioNames[0];
+  }, [portfolioNames, activePortfolioName]);
+
+  const activePortfolioItems = useMemo(
+    () => portfolios[resolvedActivePortfolioName] || [],
+    [portfolios, resolvedActivePortfolioName]
+  );
+
   const fetchPortfolio = async () => {
     try {
+      setError(null);
+      setLoading(true);
+      const currentToken = localStorage.getItem('token');
+      if (!currentToken) {
+        setError('Please log in to view your portfolio.');
+        setLoading(false);
+        return;
+      }
+      
       const res = await axios.get(`${API_BASE}/my-portfolio/`, {
-        headers: authHeaders,
+        headers: { Authorization: `Token ${currentToken}` },
       });
-      setPortfolio(Array.isArray(res.data) ? res.data : res.data.results || []);
-    } catch {
-      setPortfolio([]);
+      setPortfolios(mapPortfoliosFromPayload(res.data));
+    } catch (err) {
+      console.error('Portfolio fetch error:', err);
+      const errorMessage = err.response?.data?.error 
+        || err.response?.data?.detail 
+        || err.message 
+        || 'Failed to load portfolio. Please try again.';
+      setError(errorMessage);
+      setPortfolios({});
+      
+      // If it's an authentication error, redirect to login
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        localStorage.removeItem('token');
+        window.location.href = '/login';
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    const currentToken = localStorage.getItem('token');
+    if (!currentToken) {
+      setError('Please log in to view your portfolio.');
+      setLoading(false);
+      return;
+    }
     fetchPortfolio();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, []);
+
+  useEffect(() => {
+    if (portfolioNames.length === 0) {
+      if (activePortfolioName !== DEFAULT_PORTFOLIO_NAME) {
+        setActivePortfolioName(DEFAULT_PORTFOLIO_NAME);
+      }
+      return;
+    }
+    if (!portfolioNames.includes(activePortfolioName)) {
+      setActivePortfolioName(portfolioNames[0]);
+    }
+  }, [portfolioNames, activePortfolioName]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -195,6 +477,7 @@ const Portfolio = () => {
     const optimisticId = `tmp-${Date.now()}`;
     const optimisticItem = {
       id: optimisticId,
+      portfolio_name: resolvedActivePortfolioName,
       symbol,
       company_name: selectedSuggestion?.name || symbol,
       live_price: null,
@@ -202,6 +485,14 @@ const Portfolio = () => {
       market_cap: null,
       sparkline_7d: [],
       price_direction: 'neutral',
+      annualized_return: null,
+      volatility: null,
+      cluster_label: 'Underperformers',
+      predicted_price_7d: null,
+      forecast_line_7d: [],
+      rsi_14: null,
+      recommendation: 'HOLD',
+      buy_signal: false,
       stock_details: {
         symbol,
         company_name: selectedSuggestion?.name || symbol,
@@ -209,24 +500,33 @@ const Portfolio = () => {
     };
 
     setAdding(true);
-    setPortfolio((prev) => [optimisticItem, ...prev]);
+    setPortfolios((prev) => addOrReplacePortfolioItem(prev, optimisticItem, resolvedActivePortfolioName));
     setShowSuggestions(false);
 
     try {
+      const currentToken = localStorage.getItem('token');
+      if (!currentToken) {
+        alert('Please log in to add stocks to your portfolio.');
+        return;
+      }
+      
       const res = await axios.post(
         `${API_BASE}/my-portfolio/add-stock/`,
-        { symbol },
-        { headers: authHeaders }
+        {
+          symbol,
+          portfolio_sector: resolvedActivePortfolioName,
+        },
+        { headers: { Authorization: `Token ${currentToken}` } }
       );
 
       const serverItem = res.data?.item || null;
       if (serverItem) {
-        setPortfolio((prev) => {
-          const withoutTemp = prev.filter((item) => item.id !== optimisticId && item.id !== serverItem.id);
-          return [serverItem, ...withoutTemp];
+        setPortfolios((prev) => {
+          const { nextMap } = removePortfolioItemById(prev, optimisticId);
+          return addOrReplacePortfolioItem(nextMap, serverItem, serverItem.portfolio_name);
         });
       } else {
-        setPortfolio((prev) => prev.filter((item) => item.id !== optimisticId));
+        setPortfolios((prev) => removePortfolioItemById(prev, optimisticId).nextMap);
         await fetchPortfolio();
       }
 
@@ -234,7 +534,7 @@ const Portfolio = () => {
       setSelectedSuggestion(null);
       setSearchResults([]);
     } catch (err) {
-      setPortfolio((prev) => prev.filter((item) => item.id !== optimisticId));
+      setPortfolios((prev) => removePortfolioItemById(prev, optimisticId).nextMap);
       const msg = err.response?.data?.error
         || err.response?.data?.detail
         || 'Unable to add this stock right now.';
@@ -243,24 +543,33 @@ const Portfolio = () => {
       setAdding(false);
     }
   };
-
   const removeFromPortfolio = async (portfolioId) => {
-    const removedItem = portfolio.find((item) => item.id === portfolioId);
-    setPortfolio((prev) => prev.filter((item) => item.id !== portfolioId));
+    const { nextMap, removedItem } = removePortfolioItemById(portfolios, portfolioId);
+    if (!removedItem) return;
+
+    setPortfolios(nextMap);
     try {
-      await axios.delete(`${API_BASE}/my-portfolio/${portfolioId}/`, {
-        headers: authHeaders,
-      });
-    } catch {
-      if (removedItem) {
-        setPortfolio((prev) => [removedItem, ...prev]);
+      const currentToken = localStorage.getItem('token');
+      if (!currentToken) {
+        alert('Please log in to manage your portfolio.');
+        setPortfolios((prev) => addOrReplacePortfolioItem(prev, removedItem, removedItem.portfolio_name));
+        return;
       }
-      alert('Failed to remove stock from portfolio.');
+      
+      await axios.delete(`${API_BASE}/my-portfolio/${portfolioId}/`, {
+        headers: { Authorization: `Token ${currentToken}` },
+      });
+    } catch (err) {
+      setPortfolios((prev) => addOrReplacePortfolioItem(prev, removedItem, removedItem.portfolio_name));
+      const errorMsg = err.response?.data?.error 
+        || err.response?.data?.detail 
+        || 'Failed to remove stock from portfolio.';
+      alert(errorMsg);
     }
   };
 
   const summary = useMemo(() => {
-    const valued = portfolio.map((item) => {
+    const valued = activePortfolioItems.map((item) => {
       const livePrice = toNumber(item.live_price ?? item.stock_details?.current_price);
       const changePercent = toNumber(item.day_change_percent);
       return {
@@ -286,29 +595,105 @@ const Portfolio = () => {
       deltaPercent,
       topPerformer,
     };
-  }, [portfolio]);
+  }, [activePortfolioItems]);
+
+  const scatterModel = useMemo(() => {
+    const points = activePortfolioItems.map((item) => ({
+      symbol: item.symbol || item.stock_details?.symbol || '-',
+      annualizedReturn: toNumber(item.annualized_return),
+      volatility: toNumber(item.volatility),
+      clusterLabel: item.cluster_label || 'Underperformers',
+      recommendation: item.recommendation || 'HOLD',
+    }));
+    return buildScatterPlotModel(points);
+  }, [activePortfolioItems]);
+
+  const activeScatterPoint = useMemo(() => {
+    if (!scatterModel?.points?.length) return null;
+    return scatterModel.points.find((point) => point.symbol === activeScatterSymbol) || scatterModel.points[0];
+  }, [scatterModel, activeScatterSymbol]);
+
+  useEffect(() => {
+    if (!scatterModel?.points?.length) {
+      if (activeScatterSymbol) setActiveScatterSymbol('');
+      return;
+    }
+    const stillExists = scatterModel.points.some((point) => point.symbol === activeScatterSymbol);
+    if (!stillExists) {
+      setActiveScatterSymbol(scatterModel.points[0].symbol);
+    }
+  }, [scatterModel, activeScatterSymbol]);
 
   if (loading) {
-    return <div className="loading-text p-10 text-center font-bold">Loading portfolio...</div>;
+    return (
+      <div className="portfolio-dashboard">
+        <div className="loading-text p-10 text-center font-bold">Loading portfolio...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="portfolio-dashboard">
+        <div className="analytics-error p-6 text-center">
+          <h3 style={{ marginBottom: '1rem', color: 'var(--danger-light)' }}>Error Loading Portfolio</h3>
+          <p>{error}</p>
+          <button
+            onClick={fetchPortfolio}
+            className="btn-primary"
+            style={{ marginTop: '1rem' }}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="container p-6 mx-auto portfolio-dashboard">
+      <section className="portfolio-tabs-card">
+        <div className="portfolio-tabs-head">
+          <h3>Sector Portfolios</h3>
+          <p>Each tab tracks a separate portfolio by sector context.</p>
+        </div>
+
+        {portfolioNames.length === 0 ? (
+          <div className="portfolio-empty">No sector portfolios yet.</div>
+        ) : (
+          <div className="portfolio-tabs" role="tablist" aria-label="Sector portfolios">
+            {portfolioNames.map((portfolioName) => (
+              <button
+                key={portfolioName}
+                type="button"
+                role="tab"
+                aria-selected={resolvedActivePortfolioName === portfolioName}
+                className={`portfolio-tab ${resolvedActivePortfolioName === portfolioName ? 'is-active' : ''}`}
+                onClick={() => setActivePortfolioName(portfolioName)}
+              >
+                <span>{portfolioName}</span>
+                <span className="portfolio-tab-count mono-num">{(portfolios[portfolioName] || []).length}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
       <section className="portfolio-summary-grid">
         <article className="portfolio-summary-card">
-          <p className="summary-label">Total Portfolio Value</p>
+          <p className="summary-label">Total Value ({resolvedActivePortfolioName})</p>
           <p className="summary-value mono-num">{formatCompactCurrency(summary.totalValue)}</p>
         </article>
 
         <article className="portfolio-summary-card">
-          <p className="summary-label">Daily Gain / Loss</p>
+          <p className="summary-label">Daily Gain / Loss ({resolvedActivePortfolioName})</p>
           <p className={`summary-value mono-num ${changeClassName(summary.deltaPercent)}`}>
             {formatSignedPercent(summary.deltaPercent)}
           </p>
         </article>
 
         <article className="portfolio-summary-card">
-          <p className="summary-label">Top Performing Stock</p>
+          <p className="summary-label">Top Performer ({resolvedActivePortfolioName})</p>
           <p className="summary-value mono-num">
             {summary.topPerformer ? summary.topPerformer.symbol : 'N/A'}
           </p>
@@ -346,7 +731,7 @@ const Portfolio = () => {
             className="btn-add-stock"
             disabled={adding || !resolveSymbolForAdd()}
           >
-            {adding ? 'Adding...' : 'Add Stock'}
+            {adding ? 'Adding...' : `Add To ${resolvedActivePortfolioName}`}
           </button>
         </form>
 
@@ -372,9 +757,123 @@ const Portfolio = () => {
           </div>
         )}
       </section>
+      <section className="portfolio-scatter-card">
+        <div className="portfolio-scatter-head">
+          <h3>Risk vs Return Cluster Map</h3>
+          <p>
+            Volatility on X-axis and annualized return on Y-axis for
+            {' '}
+            <strong>{resolvedActivePortfolioName}</strong>
+            {' '}
+            holdings.
+          </p>
+        </div>
+
+        {!scatterModel ? (
+          <div className="portfolio-empty">
+            Risk/return data is still loading for the
+            {' '}
+            {resolvedActivePortfolioName}
+            {' '}
+            portfolio.
+          </div>
+        ) : (
+          <>
+            <div className="portfolio-scatter-wrap">
+              <svg
+                className="portfolio-scatter-svg"
+                viewBox={`0 0 ${scatterModel.width} ${scatterModel.height}`}
+                role="img"
+                aria-label="Risk versus return scatter chart"
+              >
+                <path
+                  d={`M ${scatterModel.padding} ${scatterModel.height - scatterModel.padding} L ${scatterModel.width - scatterModel.padding} ${scatterModel.height - scatterModel.padding}`}
+                  className="scatter-axis"
+                />
+                <path
+                  d={`M ${scatterModel.padding} ${scatterModel.height - scatterModel.padding} L ${scatterModel.padding} ${scatterModel.padding}`}
+                  className="scatter-axis"
+                />
+
+                {scatterModel.xTicks.map((tick) => (
+                  <g key={`x-${tick.x}`}>
+                    <path
+                      d={`M ${tick.x} ${scatterModel.height - scatterModel.padding} L ${tick.x} ${scatterModel.padding}`}
+                      className="scatter-grid"
+                    />
+                    <text
+                      x={tick.x}
+                      y={scatterModel.height - scatterModel.padding + 18}
+                      className="scatter-tick-label"
+                      textAnchor="middle"
+                    >
+                      {tick.value}%
+                    </text>
+                  </g>
+                ))}
+
+                {scatterModel.yTicks.map((tick) => (
+                  <g key={`y-${tick.y}`}>
+                    <path
+                      d={`M ${scatterModel.padding} ${tick.y} L ${scatterModel.width - scatterModel.padding} ${tick.y}`}
+                      className="scatter-grid"
+                    />
+                    <text
+                      x={scatterModel.padding - 10}
+                      y={tick.y + 4}
+                      className="scatter-tick-label"
+                      textAnchor="end"
+                    >
+                      {tick.value}%
+                    </text>
+                  </g>
+                ))}
+
+                {scatterModel.points.map((point) => {
+                  const isActive = activeScatterPoint?.symbol === point.symbol;
+                  return (
+                    <g key={point.symbol}>
+                      <circle
+                        cx={point.x}
+                        cy={point.y}
+                        r={isActive ? 8 : 5}
+                        fill={point.color}
+                        className="scatter-point"
+                        onMouseEnter={() => setActiveScatterSymbol(point.symbol)}
+                      />
+                      {isActive && (
+                        <text x={point.x + 10} y={point.y - 8} className="scatter-point-label">
+                          {point.symbol}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+
+            <div className="portfolio-scatter-footer">
+              <div className="scatter-legend">
+                <span><i className="legend-dot safe" /> Safe Haven</span>
+                <span><i className="legend-dot growth" /> Aggressive Growth</span>
+                <span><i className="legend-dot under" /> Underperformers</span>
+              </div>
+
+              {activeScatterPoint && (
+                <div className="scatter-focus-card">
+                  <p className="scatter-focus-symbol">{activeScatterPoint.symbol}</p>
+                  <p className="scatter-focus-metric">Volatility: <span className="mono-num">{formatPercent(activeScatterPoint.volatility)}</span></p>
+                  <p className="scatter-focus-metric">Annualized Return: <span className="mono-num">{formatSignedPercent(activeScatterPoint.annualizedReturn)}</span></p>
+                  <p className="scatter-focus-metric">Cluster: <span>{activeScatterPoint.clusterLabel}</span></p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </section>
 
       <section className="portfolio-table-card">
-        {portfolio.length === 0 ? (
+        {portfolioNames.length === 0 ? (
           <div className="portfolio-empty">
             No stocks in your portfolio yet. Search and add your first stock.
             <div className="mt-6">
@@ -393,66 +892,126 @@ const Portfolio = () => {
                     <th>52W High</th>
                     <th>52W Low</th>
                     <th>Avg 52W Discount</th>
-                    <th>7D Trend</th>
+                    <th>LR Forecast (2D)</th>
+                    <th>AI Direction</th>
+                    <th>CNN Prediction (2D)</th>
+                    <th>RNN Prediction (2D)</th>
                     <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {portfolio.map((item) => {
-                    const symbol = item.symbol || item.stock_details?.symbol || '-';
-                    const company = item.company_name || item.stock_details?.company_name || symbol;
-                    const sparkline = buildSparkline(item.sparkline_7d);
-                    return (
-                      <tr key={item.id} className={`portfolio-table-row ${String(item.id).startsWith('tmp-') ? 'is-pending' : ''}`}>
-                        <td>
-                          <div className="portfolio-symbol-cell">
-                            <span className="symbol-badge">{symbol}</span>
-                            <span className="portfolio-company">{company}</span>
-                          </div>
-                        </td>
-                        <td className="mono-num">{formatCurrency(item.live_price ?? item.stock_details?.current_price)}</td>
-                        <td className="mono-num">{formatNumber(item.stock_details?.pe_ratio)}</td>
-                        <td className="mono-num">{formatCurrency(item.stock_details?.fifty_two_week_high)}</td>
-                        <td className="mono-num">{formatCurrency(item.stock_details?.fifty_two_week_low)}</td>
-                        <td className={`mono-num ${discountClassName(item.stock_details?.avg_discount_52w)}`}>
-                          {formatCurrency(item.stock_details?.avg_discount_52w)}
-                        </td>
-                        <td>
-                          {sparkline ? (
-                            <svg
-                              className="mini-sparkline"
-                              viewBox={`0 0 ${sparkline.width} ${sparkline.height}`}
-                              aria-label={`${symbol} seven day trend`}
-                            >
-                              <path d={sparkline.areaPath} className="mini-sparkline-area" />
-                              <path d={sparkline.linePath} className="mini-sparkline-line" />
-                            </svg>
-                          ) : (
-                            <span className="sparkline-empty">--</span>
-                          )}
-                        </td>
-                        <td>
-                          {!String(item.id).startsWith('tmp-') ? (
-                            <button
-                              onClick={() => removeFromPortfolio(item.id)}
-                              className="btn-remove"
-                              title="Remove from portfolio"
-                            >
-                              Remove
-                            </button>
-                          ) : (
-                            <span className="row-pending-tag">Syncing...</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {activePortfolioItems.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" className="portfolio-empty">
+                        No stocks found in
+                        {' '}
+                        {resolvedActivePortfolioName}
+                        .
+                      </td>
+                    </tr>
+                  ) : (
+                    activePortfolioItems.map((item) => {
+                      const symbol = item.symbol || item.stock_details?.symbol || '-';
+                      const company = item.company_name || item.stock_details?.company_name || symbol;
+                      const sparkline = buildSparkline(item.sparkline_7d);
+                      return (
+                        <tr
+                          key={item.id}
+                          className={`portfolio-table-row ${String(item.id).startsWith('tmp-') ? 'is-pending' : ''}`}
+                          onMouseEnter={() => setActiveScatterSymbol(symbol)}
+                          onClick={() => handleStockClick(item)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <td>
+                            <div className="portfolio-symbol-cell">
+                              <span className="symbol-badge">{symbol}</span>
+                              <span className="portfolio-company">{company}</span>
+                            </div>
+                          </td>
+                          <td className="mono-num">{formatCurrency(item.live_price ?? item.stock_details?.current_price)}</td>
+                          <td className="mono-num">{formatNumber(item.stock_details?.pe_ratio)}</td>
+                          <td className="mono-num">{formatCurrency(item.stock_details?.fifty_two_week_high)}</td>
+                          <td className="mono-num">{formatCurrency(item.stock_details?.fifty_two_week_low)}</td>
+                          <td className={`mono-num ${discountClassName(item.stock_details?.avg_discount_52w)}`}>
+                            {formatCurrency(item.stock_details?.avg_discount_52w)}
+                          </td>
+                          <td>
+                             <div style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
+                               {item.lr_forecast_2d && item.lr_forecast_2d[0] != null ? (
+                                 <>
+                                   <span style={{ color: '#38bdf8' }}>D+1: {formatCurrency(item.lr_forecast_2d[0])}</span>
+                                   <span style={{ color: '#818cf8' }}>D+2: {formatCurrency(item.lr_forecast_2d[1])}</span>
+                                 </>
+                               ) : (
+                                 <span style={{ color: 'var(--text-tertiary)' }}>N/A</span>
+                               )}
+                             </div>
+                          </td>
+                          <td className="mono-num">
+                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                               {item.logistic_signal ? (
+                                 <>
+                                   <span className={`recommendation-badge ${item.logistic_signal === 'UP' ? 'recommendation-strong-buy' : 'recommendation-sell'}`} style={{ padding: '2px 8px', fontSize: '0.7rem' }}>
+                                     {item.logistic_signal}
+                                   </span>
+                                   {item.logistic_accuracy != null && (
+                                     <span style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '2px' }}>
+                                       Acc: {formatPercent(item.logistic_accuracy * 100)}
+                                     </span>
+                                   )}
+                                 </>
+                               ) : <span className="text-gray-500">N/A</span>}
+                             </div>
+                          </td>
+                          <td>
+                             <div style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
+                               {item.cnn_next_2_days && item.cnn_next_2_days[0] != null ? (
+                                 <>
+                                   <span style={{ color: '#10b981' }}>D+1: {formatCurrency(item.cnn_next_2_days[0])}</span>
+                                   <span style={{ color: '#059669' }}>D+2: {formatCurrency(item.cnn_next_2_days[1])}</span>
+                                   {item.cnn_rmse != null && (
+                                     <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>RMSE: {item.cnn_rmse.toFixed(2)}</span>
+                                   )}
+                                 </>
+                               ) : <span className="text-gray-500">N/A</span>}
+                             </div>
+                          </td>
+                          <td>
+                             <div style={{ display: 'flex', flexDirection: 'column', fontSize: '0.85rem' }}>
+                               {item.rnn_next_2_days && item.rnn_next_2_days[0] != null ? (
+                                 <>
+                                   <span style={{ color: '#8b5cf6' }}>D+1: {formatCurrency(item.rnn_next_2_days[0])}</span>
+                                   <span style={{ color: '#7c3aed' }}>D+2: {formatCurrency(item.rnn_next_2_days[1])}</span>
+                                   {item.rnn_rmse != null && (
+                                     <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>RMSE: {item.rnn_rmse.toFixed(2)}</span>
+                                   )}
+                                 </>
+                               ) : <span className="text-gray-500">N/A</span>}
+                             </div>
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            {!String(item.id).startsWith('tmp-') ? (
+                              <button
+                                onClick={() => removeFromPortfolio(item.id)}
+                                className="btn-remove"
+                                title="Remove from portfolio"
+                              >
+                                Remove
+                              </button>
+                            ) : (
+                              <span className="row-pending-tag">Syncing...</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
 
             <div className="portfolio-mobile-cards">
-              {portfolio.map((item) => {
+              {activePortfolioItems.map((item) => {
                 const symbol = item.symbol || item.stock_details?.symbol || '-';
                 const sparkline = buildSparkline(item.sparkline_7d, 180, 44, 5);
                 return (
@@ -485,19 +1044,53 @@ const Portfolio = () => {
                         {formatCurrency(item.stock_details?.avg_discount_52w)}
                       </span>
                     </div>
-                    <div className="card-sparkline">
-                      {sparkline ? (
-                        <svg
-                          className="mini-sparkline"
-                          viewBox={`0 0 ${sparkline.width} ${sparkline.height}`}
-                          aria-label={`${symbol} seven day trend`}
-                        >
-                          <path d={sparkline.areaPath} className="mini-sparkline-area" />
-                          <path d={sparkline.linePath} className="mini-sparkline-line" />
-                        </svg>
-                      ) : (
-                        <span className="sparkline-empty">No trend data</span>
-                      )}
+                    <div className="card-row">
+                      <span>LR Forecast (2D)</span>
+                      <div className="flex flex-col text-right">
+                         {item.lr_forecast_2d && item.lr_forecast_2d[0] != null ? (
+                           <>
+                             <span style={{ color: '#38bdf8' }}>D+1: {formatCurrency(item.lr_forecast_2d[0])}</span>
+                             <span style={{ color: '#818cf8' }}>D+2: {formatCurrency(item.lr_forecast_2d[1])}</span>
+                           </>
+                         ) : <span>N/A</span>}
+                      </div>
+                    </div>
+                    <div className="card-row">
+                      <span>AI Direction</span>
+                      <div className="flex flex-col text-right">
+                         {item.logistic_signal ? (
+                           <>
+                             <span className={`recommendation-badge ${item.logistic_signal === 'UP' ? 'recommendation-strong-buy' : 'recommendation-sell'}`} style={{ padding: '2px 8px', fontSize: '0.7rem' }}>
+                               {item.logistic_signal}
+                             </span>
+                             {item.logistic_accuracy != null && (
+                               <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Acc: {formatPercent(item.logistic_accuracy * 100)}</span>
+                             )}
+                           </>
+                         ) : <span>N/A</span>}
+                      </div>
+                    </div>
+                    <div className="card-row">
+                      <span>CNN (2D)</span>
+                      <div className="flex flex-col text-right">
+                         {item.cnn_next_2_days && item.cnn_next_2_days[0] != null ? (
+                           <>
+                             <span style={{ color: '#10b981' }}>D+1: {formatCurrency(item.cnn_next_2_days[0])}</span>
+                             <span style={{ color: '#059669' }}>D+2: {formatCurrency(item.cnn_next_2_days[1])}</span>
+                           </>
+                         ) : <span>N/A</span>}
+                      </div>
+                    </div>
+                    <div className="card-row">
+                      <span>RNN (2D)</span>
+                      <div className="flex flex-col text-right">
+                         {item.rnn_next_2_days && item.rnn_next_2_days[0] != null ? (
+                           <>
+                             <span style={{ color: '#8b5cf6' }}>D+1: {formatCurrency(item.rnn_next_2_days[0])}</span>
+                             <span style={{ color: '#7c3aed' }}>D+2: {formatCurrency(item.rnn_next_2_days[1])}</span>
+                           </>
+                         ) : <span>N/A</span>}
+                      </div>
                     </div>
                     {!String(item.id).startsWith('tmp-') && (
                       <button onClick={() => removeFromPortfolio(item.id)} className="btn-remove">
