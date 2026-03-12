@@ -39,10 +39,13 @@ class StockListView(generics.ListAPIView):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        # Optional filtering by sector
-        sector_id = self.request.query_params.get('sector_id')
-        if sector_id:
-            queryset = queryset.filter(sector_id=sector_id)
+        # Optional filtering by sector (can be ID or Name)
+        sector_param = self.request.query_params.get('sector_id')
+        if sector_param:
+            if sector_param.isdigit():
+                queryset = queryset.filter(sector_id=sector_param)
+            else:
+                queryset = queryset.filter(sector__name__iexact=sector_param)
         
         # Limit to top 30 as per user requirement
         return queryset[:30]
