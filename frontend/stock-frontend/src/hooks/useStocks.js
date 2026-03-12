@@ -3,10 +3,10 @@ import axios from 'axios';
 
 const API_BASE = '/api';
 
-// Fetch all stocks with pagination
-export const useStocks = (page = 1, includeLive = false) => {
+// Fetch all stocks with pagination and sector filtering
+export const useStocks = (page = 1, includeLive = false, sectorId = null) => {
   return useQuery({
-    queryKey: ['stocks', page, includeLive],
+    queryKey: ['stocks', page, includeLive, sectorId],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: page.toString(),
@@ -14,12 +14,39 @@ export const useStocks = (page = 1, includeLive = false) => {
       if (includeLive) {
         params.append('include_live', 'true');
       }
+      if (sectorId) {
+        params.append('sector_id', sectorId);
+      }
       const res = await axios.get(`${API_BASE}/stocks/?${params}`);
       return res.data;
     },
     staleTime: includeLive ? 30000 : 300000, // 30s for live data, 5min for cached
     gcTime: 600000, // Keep in cache for 10 minutes
     refetchOnWindowFocus: includeLive, // Only refetch on focus if live data
+  });
+};
+
+// Fetch all sectors
+export const useSectors = () => {
+  return useQuery({
+    queryKey: ['sectors'],
+    queryFn: async () => {
+      const res = await axios.get(`${API_BASE}/sectors/`);
+      return res.data;
+    },
+    staleTime: 3600000, // 1 hour
+  });
+};
+
+// Fetch top 5 sectors
+export const useTopSectors = () => {
+  return useQuery({
+    queryKey: ['topSectors'],
+    queryFn: async () => {
+      const res = await axios.get(`${API_BASE}/sectors/top/`);
+      return res.data;
+    },
+    staleTime: 3600000, // 1 hour
   });
 };
 

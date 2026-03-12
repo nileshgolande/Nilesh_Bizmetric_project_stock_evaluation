@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStocks, useStockSearch } from '../hooks/useStocks';
+import { useStocks, useStockSearch, useTopSectors } from '../hooks/useStocks';
 import { StockTableSkeleton } from './SkeletonLoader';
 import './Login.css';
 
@@ -85,7 +85,7 @@ const StocksPageOptimized = () => {
   const navigate = useNavigate();
   const authHeaders = token ? { Authorization: `Token ${token}` } : {};
 
-  const [activeSectors, setActiveSectors] = useState([]);
+  const [selectedSectorId, setSelectedSectorId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [quickAdding, setQuickAdding] = useState('');
@@ -96,43 +96,33 @@ const StocksPageOptimized = () => {
   const searchRef = useRef(null);
 
   // Use React Query hooks
-  const { data: stocksData, isLoading, isFetching, error } = useStocks(page, includeLive);
+  const { data: stocksData, isLoading, isFetching, error } = useStocks(page, includeLive, selectedSectorId);
   const { data: searchResults = [], isLoading: searching } = useStockSearch(
     searchQuery,
     showSuggestions && searchQuery.trim().length > 0
   );
+  const { data: topSectors = [] } = useTopSectors();
 
   const stocks = useMemo(() => {
     if (!stocksData) return [];
     return Array.isArray(stocksData) ? stocksData : stocksData.results || [];
   }, [stocksData]);
 
-  const sectors = useMemo(
-    () => [...new Set(stocks.map((stock) => stock.sector_name).filter(Boolean))].sort(),
-    [stocks]
-  );
-
   const filteredStocks = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return stocks.filter((stock) => {
-      const sectorPass = activeSectors.length === 0 || activeSectors.includes(stock.sector_name);
-      if (!sectorPass) return false;
-
       if (!query) return true;
       const symbol = stock.symbol?.toLowerCase() || '';
       const company = stock.company_name?.toLowerCase() || '';
       const sector = stock.sector_name?.toLowerCase() || '';
       return symbol.includes(query) || company.includes(query) || sector.includes(query);
     });
-  }, [stocks, activeSectors, searchQuery]);
+  }, [stocks, searchQuery]);
 
-  const toggleSector = (sector) => {
-    setActiveSectors((prev) =>
-      prev.includes(sector) ? prev.filter((item) => item !== sector) : [...prev, sector]
-    );
+  const handleSectorChange = (e) => {
+    setSelectedSectorId(e.target.value);
+    setPage(1); // Reset to first page when sector changes
   };
-
-  const clearSectorFilter = () => setActiveSectors([]);
 
   const handleSelectSuggestion = (item) => {
     setSearchQuery(`${item.symbol}`);
@@ -149,12 +139,7 @@ const StocksPageOptimized = () => {
       return;
     }
 
-    const portfolioSector =
-      activeSectors.length === 1
-        ? activeSectors[0]
-        : activeSectors.length > 1
-        ? stock.sector_name
-        : null;
+    const portfolioSector = selectedSectorId || stock.sector_id;
 
     setQuickAdding(stock.symbol);
     try {
@@ -253,24 +238,20 @@ const StocksPageOptimized = () => {
           )}
         </div>
 
-        <div className="sector-chip-wrap">
-          <button
-            type="button"
-            className={`sector-chip ${activeSectors.length === 0 ? 'is-active' : ''}`}
-            onClick={clearSectorFilter}
+        <div className="sector-filter-dropdown">
+          <select 
+            className="explorer-search-input sector-select" 
+            value={selectedSectorId} 
+            onChange={handleSectorChange}
+            style={{ width: 'auto', minWidth: '200px', cursor: 'pointer' }}
           >
-            All Sectors
-          </button>
-          {sectors.map((sector) => (
-            <button
-              key={sector}
-              type="button"
-              className={`sector-chip ${activeSectors.includes(sector) ? 'is-active' : ''}`}
-              onClick={() => toggleSector(sector)}
-            >
-              {sector}
-            </button>
-          ))}
+            <option value="">All Sectors</option>
+            {topSectors.map((sector) => (
+              <option key={sector.id} value={sector.id}>
+                {sector.name} (Trending)
+              </option>
+            ))}
+          </select>
         </div>
       </section>
 
@@ -280,6 +261,7 @@ const StocksPageOptimized = () => {
             <thead>
               <tr>
                 <th>Symbol</th>
+                <th>Sector</th>
                 <th>Price</th>
                 <th>P/E Ratio</th>
                 <th>52W High</th>
@@ -294,7 +276,7 @@ const StocksPageOptimized = () => {
                 <StockTableSkeleton rows={10} />
               ) : filteredStocks.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="no-data">
+                  <td colSpan="9" className="no-data">
                     No stocks match current filters.
                   </td>
                 </tr>
@@ -321,6 +303,7 @@ const StocksPageOptimized = () => {
                           <span className="stock-company">{stock.company_name || '-'}</span>
                         </div>
                       </td>
+                      <td className="sector-name">{stock.sector_name || 'Uncategorized'}</td>
                       <td className={`metric mono-num ${changeClassName(stock.day_change_percent)}`}>
                         {formatCurrency(priceValue)}
                         {stock.day_change_percent != null && (
@@ -402,3 +385,4 @@ const StocksPageOptimized = () => {
 };
 
 export default StocksPageOptimized;
+
