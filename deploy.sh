@@ -68,4 +68,4 @@ pm2 start ecosystem.config.js
 pm2 save
 pm2 startup
 
-echo "Deployment complete! Visit http://20.244.27.178"
+echo "Deployment complete! Visit http://stockevaluation.duckdns.org"
