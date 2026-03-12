@@ -337,7 +337,21 @@ const Portfolio = () => {
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [liveLoaded, setLiveLoaded] = useState(false);
-  const { data: topSectorsData } = useTopSectors();
+  
+  const predefinedSectors = [
+    { id: 'IT', name: 'IT' },
+    { id: 'Healthcare', name: 'Healthcare' },
+    { id: 'Financial Services', name: 'Financial Services' },
+    { id: 'Consumer Goods', name: 'Consumer Goods' },
+    { id: 'Energy', name: 'Energy' },
+    { id: 'Industrials', name: 'Industrials' },
+    { id: 'Telecommunications', name: 'Telecommunications' },
+    { id: 'Real Estate', name: 'Real Estate' },
+    { id: 'Consumer Services', name: 'Consumer Services' },
+    { id: 'Materials & Mining', name: 'Materials & Mining' },
+    { id: 'Automobile', name: 'Automobile' },
+    { id: 'Uncategorized', name: 'Uncategorized' }
+  ];
 
   const searchRef = useRef(null);
   const searchTimeoutRef = useRef(null);
@@ -346,11 +360,6 @@ const Portfolio = () => {
     () => sortPortfolioNames(Object.keys(portfolios)),
     [portfolios]
   );
-
-  const topSectors = useMemo(() => {
-    if (!topSectorsData) return [];
-    return Array.isArray(topSectorsData) ? topSectorsData : topSectorsData.results || [];
-  }, [topSectorsData]);
 
   const resolvedActivePortfolioName = useMemo(() => {
     if (portfolioNames.length === 0) return DEFAULT_PORTFOLIO_NAME;
@@ -757,7 +766,7 @@ const Portfolio = () => {
               style={{ width: 'auto', minWidth: '180px', cursor: 'pointer' }}
             >
               <option value="">+ Create Portfolio</option>
-              {topSectors.map((sector) => (
+              {predefinedSectors.map((sector) => (
                 <option key={sector.id} value={sector.name}>
                   {sector.name}
                 </option>

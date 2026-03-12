@@ -122,11 +122,6 @@ const StocksPageOptimized = () => {
     return Array.isArray(stocksData) ? stocksData : stocksData.results || [];
   }, [stocksData]);
 
-  const topSectors = useMemo(() => {
-    if (!topSectorsData) return [];
-    return Array.isArray(topSectorsData) ? topSectorsData : topSectorsData.results || [];
-  }, [topSectorsData]);
-
   const filteredStocks = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return stocks.filter((stock) => {
