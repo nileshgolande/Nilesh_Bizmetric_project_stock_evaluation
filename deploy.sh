@@ -3,8 +3,8 @@
 # Exit on error
 set -e
 
-PROJECT_DIR="/home/azureuser/stock_evaluation"
-REPO_URL="https://github.com/nileshgolande/Nilesh_Golande_Bizmetric_project-milkman.git"
+PROJECT_DIR="/home/azureuser/Nilesh_Bizmetric_project_stock_evaluation"
+REPO_URL="https://github.com/nileshgolande/Nilesh_Bizmetric_project_stock_evaluation.git"
 
 echo "Updating system..."
 sudo apt update && sudo apt upgrade -y
