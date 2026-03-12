@@ -110,19 +110,6 @@ const AppLayout = ({ token, setToken }) => {
               )}
             </div>
           )}
-
-          {!token && (
-            <>
-              <NavLink to="/login" className={({ isActive }) => `sidebar-link ${isActive ? 'is-active' : ''}`}>
-                <span className="sidebar-link-icon">L</span>
-                <span>Login</span>
-              </NavLink>
-              <NavLink to="/register" className="sidebar-link sidebar-link-cta">
-                <span className="sidebar-link-icon">R</span>
-                <span>Register</span>
-              </NavLink>
-            </>
-          )}
         </nav>
 
         {token && (

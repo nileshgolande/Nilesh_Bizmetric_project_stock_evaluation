@@ -66,11 +66,28 @@ class StockListView(generics.ListAPIView):
                 if not symbol:
                     return stock_data
                 try:
+                    # 1. Fetch Live Price & 7D Trend
                     snapshot = fetch_live_snapshot(symbol, include_metadata=False)
                     stock_data['live_price'] = snapshot.get('current_price')
                     stock_data['day_change_percent'] = snapshot.get('day_change_percent')
                     stock_data['sparkline_7d'] = snapshot.get('sparkline_7d', [])
                     stock_data['market_cap'] = snapshot.get('market_cap')
+                    
+                    # 2. Fetch AI Direction (7D Forecast)
+                    from predictions.stock_predictions import get_stock_predictions
+                    # Use a cache key for AI predictions specifically for the list view
+                    ai_cache_key = f"ai_list_forecast:{symbol}"
+                    ai_forecast = cache.get(ai_cache_key)
+                    if ai_forecast is None:
+                        # Only get predictions if not in cache (don't force training here)
+                        preds, _ = get_stock_predictions(symbol, days=7)
+                        if preds and 'forecast' in preds:
+                            # Transform forecast to a simple list of prices for sparkline
+                            ai_forecast = [p['price'] for p in preds['forecast']]
+                            cache.set(ai_cache_key, ai_forecast, 3600) # Cache for 1 hour
+                    
+                    stock_data['ai_direction_forecast'] = ai_forecast or []
+                    
                 except Exception:
                     pass  # Keep original data if live fetch fails
                 return stock_data

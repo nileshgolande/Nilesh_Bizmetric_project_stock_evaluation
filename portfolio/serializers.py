@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import Sector, Stock, Portfolio
 from .services import fetch_live_snapshot
 from .recommendations import build_portfolio_recommendation_map, get_base_signal_for_symbol
+from predictions.stock_predictions import get_stock_predictions
 
 class StockSerializer(serializers.ModelSerializer):
     sector_name = serializers.CharField(source='sector.name', read_only=True)
@@ -13,6 +14,8 @@ class StockSerializer(serializers.ModelSerializer):
     sparkline_7d = serializers.SerializerMethodField()
     insight_badge = serializers.SerializerMethodField()
     avg_discount_52w = serializers.SerializerMethodField()
+    rnn_signal = serializers.SerializerMethodField()
+    ai_direction_forecast = serializers.SerializerMethodField()
 
     def get_trend(self, obj):
         current_price = obj.current_price
@@ -68,6 +71,18 @@ class StockSerializer(serializers.ModelSerializer):
         average_52w_price = (high + low) / 2
         return round(average_52w_price - current_price, 2)
 
+    def get_rnn_signal(self, obj):
+        # Placeholder for RNN signal (e.g., based on trend or simple logic for now)
+        trend = self.get_trend(obj)
+        if trend == 'Uptrend': return 'Strong Buy'
+        if trend == 'Downtrend': return 'Sell'
+        return 'Hold'
+
+    def get_ai_direction_forecast(self, obj):
+        # We'll return empty for now to avoid slow performance in list view
+        # The frontend will fetch this on demand or we can pre-cache it
+        return []
+
     class Meta:
         model = Stock
         fields = [
@@ -75,7 +90,7 @@ class StockSerializer(serializers.ModelSerializer):
             'pe_ratio', 'current_price', 'fifty_two_week_high', 
             'fifty_two_week_low', 'discount_price', 'trend', 'live_price',
             'day_change_percent', 'market_cap', 'sparkline_7d', 'insight_badge',
-            'avg_discount_52w'
+            'avg_discount_52w', 'rnn_signal', 'ai_direction_forecast'
         ]
 
 class SectorSerializer(serializers.ModelSerializer):

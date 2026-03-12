@@ -91,7 +91,7 @@ const StocksPageOptimized = () => {
   const [quickAdding, setQuickAdding] = useState('');
   const [quickAdded, setQuickAdded] = useState('');
   const [page, setPage] = useState(1);
-  const [includeLive, setIncludeLive] = useState(false);
+  const [includeLive, setIncludeLive] = useState(true); // Default to live as per requirement
 
   const searchRef = useRef(null);
 
@@ -101,7 +101,21 @@ const StocksPageOptimized = () => {
     searchQuery,
     showSuggestions && searchQuery.trim().length > 0
   );
-  const { data: topSectorsData } = useTopSectors();
+
+  const predefinedSectors = [
+    { id: 'IT', name: 'IT' },
+    { id: 'Healthcare', name: 'Healthcare' },
+    { id: 'Financial Services', name: 'Financial Services' },
+    { id: 'Consumer Goods', name: 'Consumer Goods' },
+    { id: 'Energy', name: 'Energy' },
+    { id: 'Industrials', name: 'Industrials' },
+    { id: 'Telecommunications', name: 'Telecommunications' },
+    { id: 'Real Estate', name: 'Real Estate' },
+    { id: 'Consumer Services', name: 'Consumer Services' },
+    { id: 'Materials & Mining', name: 'Materials & Mining' },
+    { id: 'Automobile', name: 'Automobile' },
+    { id: 'Uncategorized', name: 'Uncategorized' }
+  ];
 
   const stocks = useMemo(() => {
     if (!stocksData) return [];
@@ -251,9 +265,9 @@ const StocksPageOptimized = () => {
             style={{ width: 'auto', minWidth: '200px', cursor: 'pointer' }}
           >
             <option value="">All Sectors</option>
-            {topSectors.map((sector) => (
-              <option key={sector.id} value={sector.id}>
-                {sector.name} (Trending)
+            {predefinedSectors.map((sector) => (
+              <option key={sector.id} value={sector.name}>
+                {sector.name}
               </option>
             ))}
           </select>
@@ -273,6 +287,8 @@ const StocksPageOptimized = () => {
                 <th>52W Low</th>
                 <th>Avg 52W Discount</th>
                 <th>7D Trend</th>
+                <th>RNN</th>
+                <th>AI Direction</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -281,19 +297,25 @@ const StocksPageOptimized = () => {
                 <StockTableSkeleton rows={10} />
               ) : filteredStocks.length === 0 ? (
                 <tr>
-                  <td colSpan="9" className="no-data">
+                  <td colSpan="11" className="no-data">
                     No stocks match current filters.
                   </td>
                 </tr>
               ) : (
                 filteredStocks.map((stock) => {
-                  const sparkline = buildSparkline(
+                  const sparkline7d = buildSparkline(
                     stock.sparkline_7d?.length
                       ? stock.sparkline_7d
                       : fallbackTrendPoints(stock.trend).map((close, i) => ({
                           date: `${i}`,
                           close,
                         }))
+                  );
+                  const sparklineAI = buildSparkline(
+                    stock.ai_direction_forecast?.map((price, i) => ({
+                      date: `${i}`,
+                      close: price,
+                    })) || []
                   );
                   const priceValue =
                     stock.live_price != null ? stock.live_price : stock.current_price;
@@ -335,14 +357,33 @@ const StocksPageOptimized = () => {
                         {formatCurrency(stock.avg_discount_52w)}
                       </td>
                       <td>
-                        {sparkline ? (
+                        {sparkline7d ? (
                           <svg
                             className="mini-sparkline"
-                            viewBox={`0 0 ${sparkline.width} ${sparkline.height}`}
+                            viewBox={`0 0 ${sparkline7d.width} ${sparkline7d.height}`}
                             aria-label={`${stock.symbol} 7 day sparkline`}
                           >
-                            <path d={sparkline.areaPath} className="mini-sparkline-area" />
-                            <path d={sparkline.linePath} className="mini-sparkline-line" />
+                            <path d={sparkline7d.areaPath} className="mini-sparkline-area" />
+                            <path d={sparkline7d.linePath} className="mini-sparkline-line" />
+                          </svg>
+                        ) : (
+                          <span className="sparkline-empty">--</span>
+                        )}
+                      </td>
+                      <td className="metric">
+                        <span className={`insight-pill ${stock.rnn_signal === 'Strong Buy' ? 'insight-undervalued' : stock.rnn_signal === 'Sell' ? 'insight-overbought' : 'insight-neutral'}`}>
+                          {stock.rnn_signal || 'Hold'}
+                        </span>
+                      </td>
+                      <td>
+                        {sparklineAI ? (
+                          <svg
+                            className="mini-sparkline"
+                            viewBox={`0 0 ${sparklineAI.width} ${sparklineAI.height}`}
+                            aria-label={`${stock.symbol} AI Direction forecast`}
+                          >
+                            <path d={sparklineAI.areaPath} className="mini-sparkline-area" style={{ fill: 'var(--primary-glow)', opacity: 0.1 }} />
+                            <path d={sparklineAI.linePath} className="mini-sparkline-line" style={{ stroke: 'var(--primary-cyan)' }} />
                           </svg>
                         ) : (
                           <span className="sparkline-empty">--</span>
