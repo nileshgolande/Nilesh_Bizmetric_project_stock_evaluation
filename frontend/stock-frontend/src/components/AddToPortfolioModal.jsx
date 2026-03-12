@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { X } from 'lucide-react';
 
-const API_BASE = 'http://127.0.0.1:8000/api';
+const API_BASE = '/api';
 
 const AddToPortfolioModal = ({ stock, onClose, onSuccess, defaultPortfolioName }) => {
   const [portfolioName, setPortfolioName] = useState(defaultPortfolioName || 'General');
@@ -20,6 +20,7 @@ const AddToPortfolioModal = ({ stock, onClose, onSuccess, defaultPortfolioName }
         
         const response = await axios.get(`${API_BASE}/my-portfolio/`, {
           headers: { Authorization: `Token ${token}` },
+          params: { include_live: false, include_analytics: false },
         });
         
         if (response.data && response.data.portfolio_names) {

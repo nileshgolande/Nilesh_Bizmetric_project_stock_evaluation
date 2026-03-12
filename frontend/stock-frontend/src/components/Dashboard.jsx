@@ -4,7 +4,7 @@ import { Plus } from 'lucide-react';
 import AddToPortfolioModal from './AddToPortfolioModal';
 import './Login.css';
 
-const API_BASE = 'http://127.0.0.1:8000/api';
+const API_BASE = '/api';
 
 const formatCurrency = (value) => (
   value == null || Number.isNaN(Number(value)) ? 'N/A' : `$${Number(value).toFixed(2)}`

@@ -11,7 +11,7 @@ import AuthPage from './components/AuthPage';
 import Portfolio from './components/Portfolio';
 import PredictionsPage from './components/PredictionsPage';
 
-const API_BASE = 'http://127.0.0.1:8000/api';
+const API_BASE = '/api';
 
 const toNumber = (value) => {
   const numeric = Number(value);

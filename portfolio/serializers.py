@@ -130,7 +130,15 @@ class PortfolioSerializer(serializers.ModelSerializer):
     cnn_rmse = serializers.SerializerMethodField()
     rnn_rmse = serializers.SerializerMethodField()
 
+    def _include_live(self):
+        return bool(self.context.get('include_live', True))
+
+    def _include_analytics(self):
+        return bool(self.context.get('include_analytics', True))
+
     def _get_live_snapshot(self, obj):
+        if not self._include_live():
+            return {}
         cache = self.context.setdefault('_live_snapshot_cache', {})
         symbol = getattr(obj.stock, 'symbol', None)
         if not symbol:
@@ -142,7 +150,32 @@ class PortfolioSerializer(serializers.ModelSerializer):
                 cache[symbol] = {}
         return cache[symbol]
 
+    def _empty_recommendation_metrics(self):
+        cached = self.context.get('_empty_portfolio_metrics')
+        if cached is not None:
+            return cached
+        cached = {
+            'annualized_return': None,
+            'volatility': None,
+            'cluster_label': None,
+            'predicted_price_7d': None,
+            'forecast_line_7d': [],
+            'rsi_14': None,
+            'buy_signal': False,
+            'lr_forecast_2d': [None, None],
+            'logistic_signal': None,
+            'cnn_next_2_days': [None, None],
+            'rnn_next_2_days': [None, None],
+            'logistic_accuracy': None,
+            'cnn_rmse': None,
+            'rnn_rmse': None,
+        }
+        self.context['_empty_portfolio_metrics'] = cached
+        return cached
+
     def _get_recommendation_map(self):
+        if not self._include_analytics():
+            return {}
         recommendation_map = self.context.get('_portfolio_recommendation_map')
         if recommendation_map is not None:
             return recommendation_map
@@ -171,6 +204,8 @@ class PortfolioSerializer(serializers.ModelSerializer):
         return recommendation_map
 
     def _get_recommendation_metrics(self, obj):
+        if not self._include_analytics():
+            return self._empty_recommendation_metrics()
         symbol = getattr(obj.stock, 'symbol', '').upper()
         recommendation_map = self._get_recommendation_map()
         if symbol in recommendation_map:

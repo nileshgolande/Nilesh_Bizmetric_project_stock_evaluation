@@ -6,44 +6,57 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import MinMaxScaler
-import torch
-import torch.nn as nn
-import torch.optim as optim
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    TORCH_AVAILABLE = True
+except Exception:
+    torch = None
+    nn = None
+    optim = None
+    TORCH_AVAILABLE = False
 from django.core.cache import cache
 
 # Reuse models from services.py
-class LSTMModel(nn.Module):
-    def __init__(self):
-        super(LSTMModel, self).__init__()
-        self.lstm = nn.LSTM(input_size=1, hidden_size=64, num_layers=2, batch_first=True, dropout=0.2)
-        self.fc = nn.Linear(64, 1)
+if TORCH_AVAILABLE:
+    class LSTMModel(nn.Module):
+        def __init__(self):
+            super(LSTMModel, self).__init__()
+            self.lstm = nn.LSTM(input_size=1, hidden_size=64, num_layers=2, batch_first=True, dropout=0.2)
+            self.fc = nn.Linear(64, 1)
 
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        out = self.fc(out[:, -1, :])
-        return out
+        def forward(self, x):
+            out, _ = self.lstm(x)
+            out = self.fc(out[:, -1, :])
+            return out
 
-class CNNModel(nn.Module):
-    def __init__(self, seq_length=60):
-        super(CNNModel, self).__init__()
-        self.conv1 = nn.Conv1d(in_channels=1, out_channels=64, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv1d(in_channels=64, out_channels=32, kernel_size=3, padding=1)
-        self.relu = nn.ReLU()
-        self.pool = nn.MaxPool1d(kernel_size=2)
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(32 * (seq_length // 2), 50)
-        self.fc2 = nn.Linear(50, 1)
+    class CNNModel(nn.Module):
+        def __init__(self, seq_length=60):
+            super(CNNModel, self).__init__()
+            self.conv1 = nn.Conv1d(in_channels=1, out_channels=64, kernel_size=3, padding=1)
+            self.conv2 = nn.Conv1d(in_channels=64, out_channels=32, kernel_size=3, padding=1)
+            self.relu = nn.ReLU()
+            self.pool = nn.MaxPool1d(kernel_size=2)
+            self.flatten = nn.Flatten()
+            self.fc1 = nn.Linear(32 * (seq_length // 2), 50)
+            self.fc2 = nn.Linear(50, 1)
 
-    def forward(self, x):
-        x = x.permute(0, 2, 1)
-        x = self.relu(self.conv1(x))
-        x = self.pool(self.relu(self.conv2(x)))
-        x = self.flatten(x)
-        x = self.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
+        def forward(self, x):
+            x = x.permute(0, 2, 1)
+            x = self.relu(self.conv1(x))
+            x = self.pool(self.relu(self.conv2(x)))
+            x = self.flatten(x)
+            x = self.relu(self.fc1(x))
+            x = self.fc2(x)
+            return x
+else:
+    LSTMModel = None
+    CNNModel = None
 
 def train_model(model, X_train, y_train, epochs=25, batch_size=32):
+    if not TORCH_AVAILABLE or model is None:
+        return None
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
@@ -65,6 +78,8 @@ def train_model(model, X_train, y_train, epochs=25, batch_size=32):
     return model
 
 def predict_future(model, last_sequence, steps, scaler, seq_length):
+    if not TORCH_AVAILABLE or model is None:
+        return [None] * len(steps)
     model.eval()
     predictions = []
     curr_seq = last_sequence.copy()
@@ -131,35 +146,46 @@ def get_stock_predictions(symbol, days=7):
         lr_preds_test = lr_model.predict(X_test.reshape(X_test.shape[0], -1))
         lr_preds = np.concatenate([lr_preds_train, lr_preds_test])
         
-        # Train LSTM
-        lstm_model = LSTMModel()
-        lstm_model = train_model(lstm_model, X_train, y_train, epochs=20, batch_size=32)
-        lstm_preds = predict_model(lstm_model, X)
-        
-        # Train CNN
-        cnn_model = CNNModel(seq_length=seq_length)
-        cnn_model = train_model(cnn_model, X_train, y_train, epochs=20, batch_size=32)
-        cnn_preds = predict_model(cnn_model, X)
+        lstm_preds = None
+        cnn_preds = None
+        lstm_preds_scaled = None
+        cnn_preds_scaled = None
+        future_lstm_preds = [None] * days
+        future_cnn_preds = [None] * days
+
+        if TORCH_AVAILABLE:
+            # Train LSTM
+            lstm_model = LSTMModel()
+            lstm_model = train_model(lstm_model, X_train, y_train, epochs=20, batch_size=32)
+            lstm_preds = predict_model(lstm_model, X)
+            
+            # Train CNN
+            cnn_model = CNNModel(seq_length=seq_length)
+            cnn_model = train_model(cnn_model, X_train, y_train, epochs=20, batch_size=32)
+            cnn_preds = predict_model(cnn_model, X)
         
         # Scale predictions back
         lr_preds_scaled = scaler.inverse_transform(lr_preds.reshape(-1, 1)).flatten()
-        lstm_preds_scaled = scaler.inverse_transform(lstm_preds.reshape(-1, 1)).flatten()
-        cnn_preds_scaled = scaler.inverse_transform(cnn_preds.reshape(-1, 1)).flatten()
+        if lstm_preds is not None:
+            lstm_preds_scaled = scaler.inverse_transform(lstm_preds.reshape(-1, 1)).flatten()
+        if cnn_preds is not None:
+            cnn_preds_scaled = scaler.inverse_transform(cnn_preds.reshape(-1, 1)).flatten()
         
         # Future predictions (next 7 days)
         future_steps = list(range(1, days + 1))
         last_seq = scaled_prices[-seq_length:]
         
-        future_lr_preds = []
-        for step in future_steps:
-            # Simple linear extrapolation for LR
-            X_future = np.arange(len(prices), len(prices) + step).reshape(-1, 1)
-            future_lr = lr_model.predict(X_future.reshape(1, -1))[0]
-            future_lr_preds.append(future_lr)
-        future_lr_preds = scaler.inverse_transform(np.array(future_lr_preds).reshape(-1, 1)).flatten()
-        
-        future_lstm_preds = predict_future(lstm_model, last_seq, future_steps, scaler, seq_length)
-        future_cnn_preds = predict_future(cnn_model, last_seq, future_steps, scaler, seq_length)
+        future_lr_preds_scaled = []
+        lr_seq = last_seq.copy()
+        for _ in future_steps:
+            future_lr_scaled = lr_model.predict(lr_seq.reshape(1, -1))[0]
+            future_lr_preds_scaled.append(future_lr_scaled)
+            lr_seq = np.append(lr_seq[1:], future_lr_scaled)
+        future_lr_preds = scaler.inverse_transform(np.array(future_lr_preds_scaled).reshape(-1, 1)).flatten()
+
+        if TORCH_AVAILABLE:
+            future_lstm_preds = predict_future(lstm_model, last_seq, future_steps, scaler, seq_length)
+            future_cnn_preds = predict_future(cnn_model, last_seq, future_steps, scaler, seq_length)
         
         # Build results
         results = []
@@ -172,8 +198,8 @@ def get_stock_predictions(symbol, days=7):
                 'date': dates_str[i],
                 'actual_price': float(prices[i]),
                 'lr_prediction': float(lr_preds_scaled[idx]),
-                'rnn_prediction': float(lstm_preds_scaled[idx]) if idx < len(lstm_preds_scaled) else None,
-                'cnn_prediction': float(cnn_preds_scaled[idx]) if idx < len(cnn_preds_scaled) else None,
+                'rnn_prediction': float(lstm_preds_scaled[idx]) if lstm_preds_scaled is not None and idx < len(lstm_preds_scaled) else None,
+                'cnn_prediction': float(cnn_preds_scaled[idx]) if cnn_preds_scaled is not None and idx < len(cnn_preds_scaled) else None,
                 'is_future': False
             })
         
@@ -201,6 +227,8 @@ def get_stock_predictions(symbol, days=7):
         return None, str(e)
 
 def predict_model(model, X):
+    if not TORCH_AVAILABLE or model is None:
+        return None
     model.eval()
     with torch.no_grad():
         X_tensor = torch.tensor(X, dtype=torch.float32)

@@ -20,6 +20,12 @@ def normalize_portfolio_name(value):
     return normalized[:100]
 
 
+def _parse_bool(value, default=True):
+    if value is None:
+        return default
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'y'}
+
+
 class StockListView(generics.ListAPIView):
     """
     API endpoint that returns all stocks across all sectors.
@@ -144,8 +150,14 @@ class UserPortfolioView(generics.ListCreateAPIView):
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        symbols = list(self.get_queryset().values_list('stock__symbol', flat=True))
-        context['portfolio_recommendation_map'] = build_portfolio_recommendation_map(symbols)
+        include_live = _parse_bool(self.request.query_params.get('include_live'), default=True)
+        include_analytics = _parse_bool(self.request.query_params.get('include_analytics'), default=False)
+        context['include_live'] = include_live
+        context['include_analytics'] = include_analytics
+
+        if include_analytics:
+            symbols = list(self.get_queryset().values_list('stock__symbol', flat=True))
+            context['portfolio_recommendation_map'] = build_portfolio_recommendation_map(symbols)
         return context
 
     def list(self, request, *args, **kwargs):

@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Link, useNavigate } from 'react-router-dom';
 import './Login.css';
 
-const API_BASE = 'http://127.0.0.1:8000/api';
+const API_BASE = '/api';
 const DEFAULT_PORTFOLIO_NAME = 'General';
 
 const toNumber = (value) => {
@@ -333,6 +333,9 @@ const Portfolio = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [activeScatterSymbol, setActiveScatterSymbol] = useState('');
   const [activePortfolioName, setActivePortfolioName] = useState(DEFAULT_PORTFOLIO_NAME);
+  const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [liveLoaded, setLiveLoaded] = useState(false);
 
   const searchRef = useRef(null);
   const searchTimeoutRef = useRef(null);
@@ -353,37 +356,66 @@ const Portfolio = () => {
     [portfolios, resolvedActivePortfolioName]
   );
 
-  const fetchPortfolio = async () => {
+  const fetchPortfolio = async (options = {}) => {
+    const {
+      includeLive = liveLoaded,
+      includeAnalytics = false,
+      showLoading = true,
+      silent = false,
+      updateFlags = true,
+    } = options;
+
     try {
-      setError(null);
-      setLoading(true);
+      if (showLoading) {
+        setError(null);
+        setLoading(true);
+      }
       const currentToken = localStorage.getItem('token');
       if (!currentToken) {
-        setError('Please log in to view your portfolio.');
-        setLoading(false);
-        return;
+        if (!silent) {
+          setError('Please log in to view your portfolio.');
+        }
+        if (showLoading) {
+          setLoading(false);
+        }
+        return false;
       }
       
       const res = await axios.get(`${API_BASE}/my-portfolio/`, {
         headers: { Authorization: `Token ${currentToken}` },
+        params: {
+          include_live: includeLive,
+          include_analytics: includeAnalytics,
+        },
       });
       setPortfolios(mapPortfoliosFromPayload(res.data));
+      if (updateFlags) {
+        setLiveLoaded(includeLive);
+        setAnalyticsLoaded(includeAnalytics);
+      }
+      return true;
     } catch (err) {
       console.error('Portfolio fetch error:', err);
-      const errorMessage = err.response?.data?.error 
-        || err.response?.data?.detail 
-        || err.message 
-        || 'Failed to load portfolio. Please try again.';
-      setError(errorMessage);
-      setPortfolios({});
-      
-      // If it's an authentication error, redirect to login
-      if (err.response?.status === 401 || err.response?.status === 403) {
+      const status = err.response?.status;
+      if (status === 401 || status === 403) {
         localStorage.removeItem('token');
         window.location.href = '/login';
+        return false;
       }
+
+      if (!silent) {
+        const errorMessage = err.response?.data?.error 
+          || err.response?.data?.detail 
+          || err.message 
+          || 'Failed to load portfolio. Please try again.';
+        setError(errorMessage);
+        setPortfolios({});
+      }
+      return false;
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   };
 
@@ -394,7 +426,28 @@ const Portfolio = () => {
       setLoading(false);
       return;
     }
-    fetchPortfolio();
+    let isMounted = true;
+    const load = async () => {
+      const ok = await fetchPortfolio({
+        includeLive: false,
+        includeAnalytics: false,
+        showLoading: true,
+        silent: false,
+        updateFlags: true,
+      });
+      if (!ok || !isMounted) return;
+      fetchPortfolio({
+        includeLive: true,
+        includeAnalytics: false,
+        showLoading: false,
+        silent: true,
+        updateFlags: true,
+      });
+    };
+    load();
+    return () => {
+      isMounted = false;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -613,6 +666,22 @@ const Portfolio = () => {
     return scatterModel.points.find((point) => point.symbol === activeScatterSymbol) || scatterModel.points[0];
   }, [scatterModel, activeScatterSymbol]);
 
+  const loadAnalytics = async () => {
+    if (analyticsLoading || analyticsLoaded) return;
+    setAnalyticsLoading(true);
+    try {
+      await fetchPortfolio({
+        includeLive: true,
+        includeAnalytics: true,
+        showLoading: false,
+        silent: true,
+        updateFlags: true,
+      });
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!scatterModel?.points?.length) {
       if (activeScatterSymbol) setActiveScatterSymbol('');
@@ -771,11 +840,33 @@ const Portfolio = () => {
 
         {!scatterModel ? (
           <div className="portfolio-empty">
-            Risk/return data is still loading for the
-            {' '}
-            {resolvedActivePortfolioName}
-            {' '}
-            portfolio.
+            {activePortfolioItems.length === 0 ? (
+              <>
+                No stocks found in
+                {' '}
+                {resolvedActivePortfolioName}
+                .
+              </>
+            ) : (
+              <>
+                <div>
+                  {analyticsLoaded
+                    ? `Risk/return data is still loading for the ${resolvedActivePortfolioName} portfolio.`
+                    : `Advanced analytics are not loaded yet for the ${resolvedActivePortfolioName} portfolio.`}
+                </div>
+                {!analyticsLoaded && (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ marginTop: '0.75rem' }}
+                    onClick={loadAnalytics}
+                    disabled={analyticsLoading}
+                  >
+                    {analyticsLoading ? 'Loading analytics...' : 'Load analytics'}
+                  </button>
+                )}
+              </>
+            )}
           </div>
         ) : (
           <>
