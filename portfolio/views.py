@@ -138,6 +138,7 @@ class SectorListView(generics.ListAPIView):
     queryset = Sector.objects.all()
     serializer_class = SectorSerializer
     permission_classes = [AllowAny]
+    pagination_class = None
 
 
 class TopSectorsView(generics.ListAPIView):
@@ -147,6 +148,7 @@ class TopSectorsView(generics.ListAPIView):
     queryset = Sector.objects.annotate(stock_count=Count('stocks')).order_by('-stock_count')[:5]
     serializer_class = SectorSerializer
     permission_classes = [AllowAny]
+    pagination_class = None
 
 
 class SectorStockListView(generics.ListAPIView):

@@ -337,7 +337,7 @@ const Portfolio = () => {
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [liveLoaded, setLiveLoaded] = useState(false);
-  const { data: topSectors = [] } = useTopSectors();
+  const { data: topSectorsData } = useTopSectors();
 
   const searchRef = useRef(null);
   const searchTimeoutRef = useRef(null);
@@ -346,6 +346,11 @@ const Portfolio = () => {
     () => sortPortfolioNames(Object.keys(portfolios)),
     [portfolios]
   );
+
+  const topSectors = useMemo(() => {
+    if (!topSectorsData) return [];
+    return Array.isArray(topSectorsData) ? topSectorsData : topSectorsData.results || [];
+  }, [topSectorsData]);
 
   const resolvedActivePortfolioName = useMemo(() => {
     if (portfolioNames.length === 0) return DEFAULT_PORTFOLIO_NAME;

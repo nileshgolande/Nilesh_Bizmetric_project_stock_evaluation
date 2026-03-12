@@ -101,12 +101,17 @@ const StocksPageOptimized = () => {
     searchQuery,
     showSuggestions && searchQuery.trim().length > 0
   );
-  const { data: topSectors = [] } = useTopSectors();
+  const { data: topSectorsData } = useTopSectors();
 
   const stocks = useMemo(() => {
     if (!stocksData) return [];
     return Array.isArray(stocksData) ? stocksData : stocksData.results || [];
   }, [stocksData]);
+
+  const topSectors = useMemo(() => {
+    if (!topSectorsData) return [];
+    return Array.isArray(topSectorsData) ? topSectorsData : topSectorsData.results || [];
+  }, [topSectorsData]);
 
   const filteredStocks = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
