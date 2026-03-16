@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { Link, useNavigate } from 'react-router-dom';
+import { useTopSectors } from '../hooks/useStocks';
 import './Login.css';
 
 const API_BASE = '/api';
@@ -336,6 +337,21 @@ const Portfolio = () => {
   const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [liveLoaded, setLiveLoaded] = useState(false);
+  
+  const predefinedSectors = [
+    { id: 'IT', name: 'IT' },
+    { id: 'Healthcare', name: 'Healthcare' },
+    { id: 'Financial Services', name: 'Financial Services' },
+    { id: 'Consumer Goods', name: 'Consumer Goods' },
+    { id: 'Energy', name: 'Energy' },
+    { id: 'Industrials', name: 'Industrials' },
+    { id: 'Telecommunications', name: 'Telecommunications' },
+    { id: 'Real Estate', name: 'Real Estate' },
+    { id: 'Consumer Services', name: 'Consumer Services' },
+    { id: 'Materials & Mining', name: 'Materials & Mining' },
+    { id: 'Automobile', name: 'Automobile' },
+    { id: 'Uncategorized', name: 'Uncategorized' }
+  ];
 
   const searchRef = useRef(null);
   const searchTimeoutRef = useRef(null);
@@ -355,6 +371,13 @@ const Portfolio = () => {
     () => portfolios[resolvedActivePortfolioName] || [],
     [portfolios, resolvedActivePortfolioName]
   );
+
+  const handleCreateSectorPortfolio = (sectorName) => {
+    if (!portfolios[sectorName]) {
+      setPortfolios((prev) => ({ ...prev, [sectorName]: [] }));
+    }
+    setActivePortfolioName(sectorName);
+  };
 
   const fetchPortfolio = async (options = {}) => {
     const {
@@ -488,9 +511,13 @@ const Portfolio = () => {
     setSearching(true);
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const res = await axios.get(`${API_BASE}/stocks/search/`, {
-          params: { q: query },
-        });
+        const params = { q: query };
+        // If the active portfolio is not 'General', filter by sector
+        if (resolvedActivePortfolioName !== DEFAULT_PORTFOLIO_NAME) {
+          params.sector_name = resolvedActivePortfolioName;
+        }
+        
+        const res = await axios.get(`${API_BASE}/stocks/search/`, { params });
         const results = Array.isArray(res.data) ? res.data : [];
         setSearchResults(results);
       } catch {
@@ -722,9 +749,30 @@ const Portfolio = () => {
   return (
     <div className="container p-6 mx-auto portfolio-dashboard">
       <section className="portfolio-tabs-card">
-        <div className="portfolio-tabs-head">
-          <h3>Sector Portfolios</h3>
-          <p>Each tab tracks a separate portfolio by sector context.</p>
+        <div className="portfolio-tabs-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h3>Sector Portfolios</h3>
+            <p>Each tab tracks a separate portfolio by sector context.</p>
+          </div>
+          <div className="create-portfolio-dropdown">
+            <select 
+              className="portfolio-search-input" 
+              onChange={(e) => {
+                if (e.target.value) {
+                  handleCreateSectorPortfolio(e.target.value);
+                  e.target.value = ''; // Reset dropdown after selection
+                }
+              }}
+              style={{ width: 'auto', minWidth: '180px', cursor: 'pointer' }}
+            >
+              <option value="">+ Create Portfolio</option>
+              {predefinedSectors.map((sector) => (
+                <option key={sector.id} value={sector.name}>
+                  {sector.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {portfolioNames.length === 0 ? (
@@ -790,7 +838,9 @@ const Portfolio = () => {
                 setShowSuggestions(true);
               }}
               className="portfolio-search-input"
-              placeholder="Find stocks by symbol or company (AAPL, RELIANCE.NS)"
+              placeholder={resolvedActivePortfolioName === DEFAULT_PORTFOLIO_NAME 
+                ? "Find stocks by symbol or company (AAPL, RELIANCE.NS)"
+                : `Find ${resolvedActivePortfolioName} stocks`}
             />
             {searching && <span className="portfolio-search-status">Searching...</span>}
           </div>

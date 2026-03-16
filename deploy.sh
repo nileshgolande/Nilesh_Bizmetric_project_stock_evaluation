@@ -3,8 +3,12 @@
 # Exit on error
 set -e
 
-PROJECT_DIR="/home/azureuser/stock_evaluation"
-REPO_URL="https://github.com/nileshgolande/Nilesh_Golande_Bizmetric_project-milkman.git"
+# Get the directory where the script is located
+PROJECT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+REPO_URL="https://github.com/nileshgolande/Nilesh_Bizmetric_project_stock_evaluation.git"
+
+echo "Current Project Directory: $PROJECT_DIR"
+cd "$PROJECT_DIR"
 
 echo "Updating system..."
 sudo apt update && sudo apt upgrade -y
@@ -23,20 +27,18 @@ if ! command -v pm2 &> /dev/null; then
     sudo npm install -g pm2
 fi
 
-# Clone or Update Repository
-if [ ! -d "$PROJECT_DIR" ]; then
-    echo "Cloning repository..."
-    git clone $REPO_URL $PROJECT_DIR
-else
-    echo "Updating repository..."
-    cd $PROJECT_DIR
-    git pull origin main
-fi
-
-cd $PROJECT_DIR
+# Update Repository
+echo "Updating repository..."
+git pull origin main --rebase || (echo "Pull failed, checking status..." && git status)
 
 # Setup Backend
 echo "Setting up Backend..."
+if [ ! -f "requirements.txt" ]; then
+    echo "ERROR: requirements.txt not found in $(pwd)"
+    ls -la
+    exit 1
+fi
+
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
@@ -61,9 +63,9 @@ sudo systemctl restart nginx
 
 # Start with PM2
 echo "Starting application with PM2..."
-pm2 delete stock_backend || true
+pm2 delete stock-backend || true
 pm2 start ecosystem.config.js
 pm2 save
 pm2 startup
 
-echo "Deployment complete! Visit http://51.140.247.29"
+echo "Deployment complete! Visit http://stockevaluation.duckdns.org"

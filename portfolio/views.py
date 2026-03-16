@@ -1,3 +1,4 @@
+from django.db.models import Count
 from django.db import IntegrityError
 from django.db.models import Q
 from rest_framework import generics, status
@@ -32,22 +33,28 @@ class StockListView(generics.ListAPIView):
     Public - no authentication required.
     Supports pagination and optional live data enrichment.
     """
-    queryset = Stock.objects.select_related('sector').order_by('sector__name', 'symbol')
+    queryset = Stock.objects.select_related('sector').order_by('-current_price', 'symbol')
     serializer_class = StockSerializer
     permission_classes = [AllowAny]
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        # Optional filtering by sector
-        sector_id = self.request.query_params.get('sector_id')
-        if sector_id:
-            queryset = queryset.filter(sector_id=sector_id)
-        return queryset
+        # Optional filtering by sector (can be ID or Name)
+        sector_param = self.request.query_params.get('sector_id')
+        if sector_param:
+            if sector_param.isdigit():
+                queryset = queryset.filter(sector_id=sector_param)
+            else:
+                queryset = queryset.filter(sector__name__iexact=sector_param)
+        
+        # Limit to top 30 as per user requirement
+        return queryset[:30]
     
     def list(self, request, *args, **kwargs):
         # Check if live data is requested
         include_live = request.query_params.get('include_live', 'false').lower() == 'true'
         
+        # We override list to handle the slicing manually if needed, but get_queryset[:30] handles it
         response = super().list(request, *args, **kwargs)
         
         # Optionally enrich with live data (can be slow, so make it optional)
@@ -62,18 +69,35 @@ class StockListView(generics.ListAPIView):
                 if not symbol:
                     return stock_data
                 try:
+                    # 1. Fetch Live Price & 7D Trend
                     snapshot = fetch_live_snapshot(symbol, include_metadata=False)
                     stock_data['live_price'] = snapshot.get('current_price')
                     stock_data['day_change_percent'] = snapshot.get('day_change_percent')
                     stock_data['sparkline_7d'] = snapshot.get('sparkline_7d', [])
                     stock_data['market_cap'] = snapshot.get('market_cap')
+                    
+                    # 2. Fetch AI Direction (7D Forecast)
+                    from predictions.stock_predictions import get_stock_predictions
+                    # Use a cache key for AI predictions specifically for the list view
+                    ai_cache_key = f"ai_list_forecast:{symbol}"
+                    ai_forecast = cache.get(ai_cache_key)
+                    if ai_forecast is None:
+                        # Only get predictions if not in cache (don't force training here)
+                        preds, _ = get_stock_predictions(symbol, days=7)
+                        if preds and 'forecast' in preds:
+                            # Transform forecast to a simple list of prices for sparkline
+                            ai_forecast = [p['price'] for p in preds['forecast']]
+                            cache.set(ai_cache_key, ai_forecast, 3600) # Cache for 1 hour
+                    
+                    stock_data['ai_direction_forecast'] = ai_forecast or []
+                    
                 except Exception:
                     pass  # Keep original data if live fetch fails
                 return stock_data
             
-            # Use threading for parallel fetching (limit to 10 concurrent requests)
+            # Use threading for parallel fetching (limit to 30 concurrent requests)
             with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = {executor.submit(enrich_stock, stock): stock for stock in results[:50]}  # Limit to first 50 for performance
+                futures = {executor.submit(enrich_stock, stock): stock for stock in results[:30]} 
                 for future in as_completed(futures):
                     pass  # Results are modified in place
             
@@ -88,21 +112,32 @@ class StockListView(generics.ListAPIView):
 class StockSearchView(APIView):
     """
     Search stocks by symbol/company with type-ahead results.
+    Optional filtering by sector.
     """
     permission_classes = [AllowAny]
 
     def get(self, request):
         query = (request.query_params.get('q') or '').strip()
-        if not query:
+        sector_name = (request.query_params.get('sector_name') or '').strip()
+        
+        if not query and not sector_name:
             return Response([])
 
         suggestions = search_tickers(query, max_results=10)
-        if suggestions:
-            return Response(suggestions, status=status.HTTP_200_OK)
+        
+        # If we have a sector filter, we should filter the suggestions or use a different search
+        if sector_name:
+            # Try to filter suggestions or just search from our DB
+            fallback_stocks = Stock.objects.filter(
+                Q(symbol__icontains=query) | Q(company_name__icontains=query)
+            ).filter(sector__name__iexact=sector_name).select_related('sector')[:10]
+        else:
+            if suggestions:
+                return Response(suggestions, status=status.HTTP_200_OK)
 
-        fallback_stocks = Stock.objects.filter(
-            Q(symbol__icontains=query) | Q(company_name__icontains=query)
-        ).select_related('sector')[:10]
+            fallback_stocks = Stock.objects.filter(
+                Q(symbol__icontains=query) | Q(company_name__icontains=query)
+            ).select_related('sector')[:10]
 
         payload = [{
             'symbol': item.symbol,
@@ -123,6 +158,17 @@ class SectorListView(generics.ListAPIView):
     queryset = Sector.objects.all()
     serializer_class = SectorSerializer
     permission_classes = [AllowAny]
+    pagination_class = None
+
+
+class TopSectorsView(generics.ListAPIView):
+    """
+    Returns top 5 trending sectors (based on stock count for now).
+    """
+    queryset = Sector.objects.annotate(stock_count=Count('stocks')).order_by('-stock_count')[:5]
+    serializer_class = SectorSerializer
+    permission_classes = [AllowAny]
+    pagination_class = None
 
 
 class SectorStockListView(generics.ListAPIView):
@@ -135,7 +181,8 @@ class SectorStockListView(generics.ListAPIView):
 
     def get_queryset(self):
         sector_id = self.kwargs.get('sector_id')
-        return Stock.objects.filter(sector_id=sector_id)
+        return Stock.objects.filter(sector_id=sector_id).order_by('-current_price')[:30]
+
 
 
 class UserPortfolioView(generics.ListCreateAPIView):

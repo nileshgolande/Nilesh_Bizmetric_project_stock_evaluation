@@ -1,19 +1,24 @@
 # Data Fetching & Analysis
-pandas==2.2.0
-numpy==1.26.4
-yfinance==0.2.36
-pandas_ta==0.3.14b0
+pandas>=2.2.0
+numpy>=1.26.4
+yfinance>=0.2.36
+pandas_ta
 
-# Web Framework & API (The Additions)
-django==5.0.2
-djangorestframework==3.14.0
-django-cors-headers==4.3.1
+# Web Framework & API
+django>=5.0.2
+djangorestframework>=3.14.0
+django-cors-headers>=4.3.1
 
 # Visualization & Utils
-matplotlib==3.8.3
-plotly==5.19.0
-requests==2.31.0
-python-dotenv==1.0.1
+matplotlib>=3.8.3
+plotly>=5.19.0
+requests>=2.31.0
+python-dotenv>=1.0.1
 scikit-learn>=1.5.0
 tensorflow-cpu>=2.18.0; python_version < "3.14"
-gunicorn==21.2.0
+gunicorn>=21.2.0
+
+# Deep Learning
+torch>=2.0.0
+torchvision
+torchaudio

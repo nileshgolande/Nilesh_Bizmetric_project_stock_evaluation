@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStocks, useStockSearch } from '../hooks/useStocks';
+import { useStocks, useStockSearch, useTopSectors } from '../hooks/useStocks';
 import { StockTableSkeleton } from './SkeletonLoader';
 import './Login.css';
 
@@ -85,54 +85,58 @@ const StocksPageOptimized = () => {
   const navigate = useNavigate();
   const authHeaders = token ? { Authorization: `Token ${token}` } : {};
 
-  const [activeSectors, setActiveSectors] = useState([]);
+  const [selectedSectorId, setSelectedSectorId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [quickAdding, setQuickAdding] = useState('');
   const [quickAdded, setQuickAdded] = useState('');
   const [page, setPage] = useState(1);
-  const [includeLive, setIncludeLive] = useState(false);
+  const [includeLive, setIncludeLive] = useState(true); // Default to live as per requirement
 
   const searchRef = useRef(null);
 
   // Use React Query hooks
-  const { data: stocksData, isLoading, isFetching, error } = useStocks(page, includeLive);
+  const { data: stocksData, isLoading, isFetching, error } = useStocks(page, includeLive, selectedSectorId);
   const { data: searchResults = [], isLoading: searching } = useStockSearch(
     searchQuery,
     showSuggestions && searchQuery.trim().length > 0
   );
+
+  const predefinedSectors = [
+    { id: 'IT', name: 'IT' },
+    { id: 'Healthcare', name: 'Healthcare' },
+    { id: 'Financial Services', name: 'Financial Services' },
+    { id: 'Consumer Goods', name: 'Consumer Goods' },
+    { id: 'Energy', name: 'Energy' },
+    { id: 'Industrials', name: 'Industrials' },
+    { id: 'Telecommunications', name: 'Telecommunications' },
+    { id: 'Real Estate', name: 'Real Estate' },
+    { id: 'Consumer Services', name: 'Consumer Services' },
+    { id: 'Materials & Mining', name: 'Materials & Mining' },
+    { id: 'Automobile', name: 'Automobile' },
+    { id: 'Uncategorized', name: 'Uncategorized' }
+  ];
 
   const stocks = useMemo(() => {
     if (!stocksData) return [];
     return Array.isArray(stocksData) ? stocksData : stocksData.results || [];
   }, [stocksData]);
 
-  const sectors = useMemo(
-    () => [...new Set(stocks.map((stock) => stock.sector_name).filter(Boolean))].sort(),
-    [stocks]
-  );
-
   const filteredStocks = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return stocks.filter((stock) => {
-      const sectorPass = activeSectors.length === 0 || activeSectors.includes(stock.sector_name);
-      if (!sectorPass) return false;
-
       if (!query) return true;
       const symbol = stock.symbol?.toLowerCase() || '';
       const company = stock.company_name?.toLowerCase() || '';
       const sector = stock.sector_name?.toLowerCase() || '';
       return symbol.includes(query) || company.includes(query) || sector.includes(query);
     });
-  }, [stocks, activeSectors, searchQuery]);
+  }, [stocks, searchQuery]);
 
-  const toggleSector = (sector) => {
-    setActiveSectors((prev) =>
-      prev.includes(sector) ? prev.filter((item) => item !== sector) : [...prev, sector]
-    );
+  const handleSectorChange = (e) => {
+    setSelectedSectorId(e.target.value);
+    setPage(1); // Reset to first page when sector changes
   };
-
-  const clearSectorFilter = () => setActiveSectors([]);
 
   const handleSelectSuggestion = (item) => {
     setSearchQuery(`${item.symbol}`);
@@ -149,12 +153,7 @@ const StocksPageOptimized = () => {
       return;
     }
 
-    const portfolioSector =
-      activeSectors.length === 1
-        ? activeSectors[0]
-        : activeSectors.length > 1
-        ? stock.sector_name
-        : null;
+    const portfolioSector = selectedSectorId || stock.sector_id;
 
     setQuickAdding(stock.symbol);
     try {
@@ -253,24 +252,20 @@ const StocksPageOptimized = () => {
           )}
         </div>
 
-        <div className="sector-chip-wrap">
-          <button
-            type="button"
-            className={`sector-chip ${activeSectors.length === 0 ? 'is-active' : ''}`}
-            onClick={clearSectorFilter}
+        <div className="sector-filter-dropdown">
+          <select 
+            className="explorer-search-input sector-select" 
+            value={selectedSectorId} 
+            onChange={handleSectorChange}
+            style={{ width: 'auto', minWidth: '200px', cursor: 'pointer' }}
           >
-            All Sectors
-          </button>
-          {sectors.map((sector) => (
-            <button
-              key={sector}
-              type="button"
-              className={`sector-chip ${activeSectors.includes(sector) ? 'is-active' : ''}`}
-              onClick={() => toggleSector(sector)}
-            >
-              {sector}
-            </button>
-          ))}
+            <option value="">All Sectors</option>
+            {predefinedSectors.map((sector) => (
+              <option key={sector.id} value={sector.name}>
+                {sector.name}
+              </option>
+            ))}
+          </select>
         </div>
       </section>
 
@@ -280,12 +275,15 @@ const StocksPageOptimized = () => {
             <thead>
               <tr>
                 <th>Symbol</th>
+                <th>Sector</th>
                 <th>Price</th>
                 <th>P/E Ratio</th>
                 <th>52W High</th>
                 <th>52W Low</th>
                 <th>Avg 52W Discount</th>
                 <th>7D Trend</th>
+                <th>RNN</th>
+                <th>AI Direction</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -294,19 +292,25 @@ const StocksPageOptimized = () => {
                 <StockTableSkeleton rows={10} />
               ) : filteredStocks.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="no-data">
+                  <td colSpan="11" className="no-data">
                     No stocks match current filters.
                   </td>
                 </tr>
               ) : (
                 filteredStocks.map((stock) => {
-                  const sparkline = buildSparkline(
+                  const sparkline7d = buildSparkline(
                     stock.sparkline_7d?.length
                       ? stock.sparkline_7d
                       : fallbackTrendPoints(stock.trend).map((close, i) => ({
                           date: `${i}`,
                           close,
                         }))
+                  );
+                  const sparklineAI = buildSparkline(
+                    stock.ai_direction_forecast?.map((price, i) => ({
+                      date: `${i}`,
+                      close: price,
+                    })) || []
                   );
                   const priceValue =
                     stock.live_price != null ? stock.live_price : stock.current_price;
@@ -321,6 +325,7 @@ const StocksPageOptimized = () => {
                           <span className="stock-company">{stock.company_name || '-'}</span>
                         </div>
                       </td>
+                      <td className="sector-name">{stock.sector_name || 'Uncategorized'}</td>
                       <td className={`metric mono-num ${changeClassName(stock.day_change_percent)}`}>
                         {formatCurrency(priceValue)}
                         {stock.day_change_percent != null && (
@@ -347,14 +352,33 @@ const StocksPageOptimized = () => {
                         {formatCurrency(stock.avg_discount_52w)}
                       </td>
                       <td>
-                        {sparkline ? (
+                        {sparkline7d ? (
                           <svg
                             className="mini-sparkline"
-                            viewBox={`0 0 ${sparkline.width} ${sparkline.height}`}
+                            viewBox={`0 0 ${sparkline7d.width} ${sparkline7d.height}`}
                             aria-label={`${stock.symbol} 7 day sparkline`}
                           >
-                            <path d={sparkline.areaPath} className="mini-sparkline-area" />
-                            <path d={sparkline.linePath} className="mini-sparkline-line" />
+                            <path d={sparkline7d.areaPath} className="mini-sparkline-area" />
+                            <path d={sparkline7d.linePath} className="mini-sparkline-line" />
+                          </svg>
+                        ) : (
+                          <span className="sparkline-empty">--</span>
+                        )}
+                      </td>
+                      <td className="metric">
+                        <span className={`insight-pill ${stock.rnn_signal === 'Strong Buy' ? 'insight-undervalued' : stock.rnn_signal === 'Sell' ? 'insight-overbought' : 'insight-neutral'}`}>
+                          {stock.rnn_signal || 'Hold'}
+                        </span>
+                      </td>
+                      <td>
+                        {sparklineAI ? (
+                          <svg
+                            className="mini-sparkline"
+                            viewBox={`0 0 ${sparklineAI.width} ${sparklineAI.height}`}
+                            aria-label={`${stock.symbol} AI Direction forecast`}
+                          >
+                            <path d={sparklineAI.areaPath} className="mini-sparkline-area" style={{ fill: 'var(--primary-glow)', opacity: 0.1 }} />
+                            <path d={sparklineAI.linePath} className="mini-sparkline-line" style={{ stroke: 'var(--primary-cyan)' }} />
                           </svg>
                         ) : (
                           <span className="sparkline-empty">--</span>
@@ -402,3 +426,4 @@ const StocksPageOptimized = () => {
 };
 
 export default StocksPageOptimized;
+
