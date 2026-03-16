@@ -1,71 +1,103 @@
 #!/bin/bash
 
-# Exit on error
+# Exit on any error
 set -e
 
-# Get the directory where the script is located
-PROJECT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-REPO_URL="https://github.com/nileshgolande/Nilesh_Bizmetric_project_stock_evaluation.git"
+# --- Configuration ---
+PROJECT_NAME="Nilesh_Bizmetric_project_stock_evaluation"
+PROJECT_DIR="/home/azureuser/$PROJECT_NAME"
+LOG_DIR="$PROJECT_DIR/logs"
+DOMAIN="stockevaluation.duckdns.org"
+EMAIL="nilesh.g@bizmetric.com"
 
-echo "Current Project Directory: $PROJECT_DIR"
+echo "==========================================="
+echo "🚀 Starting Production Deployment for $DOMAIN"
+echo "==========================================="
+
+# --- Initial Setup ---
+echo "📁 Creating log directory..."
+mkdir -p "$LOG_DIR"
+
+echo "Navigate to project directory: $PROJECT_DIR"
 cd "$PROJECT_DIR"
 
-echo "Updating system..."
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y python3-pip python3-venv nginx git curl
+# --- Code Update ---
+echo "📥 Pulling latest code from main branch..."
+git fetch origin main
+git reset --hard origin/main
 
-# Install Node.js
-if ! command -v node &> /dev/null; then
-    echo "Installing Node.js..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo apt install -y nodejs
+# --- Permissions ---
+echo "🔐 Setting directory permissions..."
+sudo chmod +x /home/azureuser
+sudo chown -R azureuser:azureuser "$PROJECT_DIR"
+
+# --- Backend Setup (Python) ---
+echo "🐍 Setting up Python backend..."
+if [ ! -d "venv" ]; then
+    echo "Creating Python virtual environment..."
+    python3 -m venv venv
 fi
-
-# Install PM2
-if ! command -v pm2 &> /dev/null; then
-    echo "Installing PM2..."
-    sudo npm install -g pm2
-fi
-
-# Update Repository
-echo "Updating repository..."
-git pull origin main --rebase || (echo "Pull failed, checking status..." && git status)
-
-# Setup Backend
-echo "Setting up Backend..."
-if [ ! -f "requirements.txt" ]; then
-    echo "ERROR: requirements.txt not found in $(pwd)"
-    ls -la
-    exit 1
-fi
-
-python3 -m venv venv
 source venv/bin/activate
+echo "Upgrading pip and installing dependencies from requirements.txt..."
 pip install --upgrade pip
 pip install -r requirements.txt
-python manage.py migrate
+
+echo "🗄️ Running Django migrations and collecting static files..."
+python manage.py migrate --noinput
 python manage.py collectstatic --noinput
 
-# Setup Frontend
-echo "Setting up Frontend..."
+# --- Frontend Setup (Node.js) ---
+echo "⚛️ Building React frontend..."
 cd frontend/stock-frontend
-npm install
+npm install --no-fund --no-audit --silent
 npm run build
 cd ../..
 
-# Configure Nginx
-echo "Configuring Nginx..."
-sudo cp nginx.conf /etc/nginx/sites-available/stock_evaluation
-sudo ln -sf /etc/nginx/sites-available/stock_evaluation /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
+# --- Nginx Initial Configuration ---
+echo "🌐 Configuring Nginx (pre-SSL)..."
+sudo cp nginx.conf /etc/nginx/sites-available/$DOMAIN
+
+if [ -L /etc/nginx/sites-enabled/$DOMAIN ]; then
+    sudo rm /etc/nginx/sites-enabled/$DOMAIN
+fi
+sudo ln -s /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
+
+if [ -L /etc/nginx/sites-enabled/default ]; then
+    sudo rm /etc/nginx/sites-enabled/default
+fi
+echo "Testing Nginx configuration..."
 sudo nginx -t
+echo "Restarting Nginx to apply initial config..."
 sudo systemctl restart nginx
 
-# Start with PM2
-echo "Starting application with PM2..."
-pm2 delete stock-backend || true
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup
+# --- SSL Certificate with Certbot ---
+echo "🔒 Obtaining/Renewing SSL certificate with Certbot..."
+if ! command -v certbot &> /dev/null; then
+    echo "Installing Certbot..."
+    sudo apt update
+    sudo apt install -y certbot python3-certbot-nginx
+fi
 
-echo "Deployment complete! Visit http://stockevaluation.duckdns.org"
+echo "Running Certbot for domain $DOMAIN..."
+sudo certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m $EMAIL --redirect
+
+echo "Testing Nginx configuration post-SSL..."
+sudo nginx -t
+echo "Reloading Nginx to apply SSL changes..."
+sudo systemctl reload nginx
+
+# --- Application Startup with PM2 ---
+echo "⚙️ Starting application with PM2..."
+pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
+pm2 save
+
+# --- Final Status Check ---
+echo "🔍 Final status check..."
+pm2 status
+sudo systemctl status nginx | cat
+
+echo "==========================================="
+echo "✅ Deployment Script Finished!"
+echo "🔗 Site should be live at: https://$DOMAIN"
+echo "📝 PM2 logs are in: $LOG_DIR"
+echo "==========================================="
