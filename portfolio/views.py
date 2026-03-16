@@ -1,3 +1,4 @@
+from django.core.cache import cache
 from django.db.models import Count
 from django.db import IntegrityError
 from django.db.models import Q
@@ -84,10 +85,15 @@ class StockListView(generics.ListAPIView):
                     if ai_forecast is None:
                         # Only get predictions if not in cache (don't force training here)
                         preds, _ = get_stock_predictions(symbol, days=7)
-                        if preds and 'forecast' in preds:
-                            # Transform forecast to a simple list of prices for sparkline
-                            ai_forecast = [p['price'] for p in preds['forecast']]
-                            cache.set(ai_cache_key, ai_forecast, 3600) # Cache for 1 hour
+                        if preds and isinstance(preds, list):
+                            # Extract future prices from prediction results
+                            future = [p for p in preds if p.get('is_future')]
+                            ai_forecast = [
+                                p.get('rnn_prediction') or p.get('lr_prediction') or p.get('cnn_prediction')
+                                for p in future
+                            ]
+                            ai_forecast = [p for p in ai_forecast if p is not None]
+                            cache.set(ai_cache_key, ai_forecast, 3600)  # Cache for 1 hour
                     
                     stock_data['ai_direction_forecast'] = ai_forecast or []
                     
