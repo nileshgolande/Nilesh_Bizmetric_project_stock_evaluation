@@ -377,8 +377,22 @@ const StocksPageOptimized = () => {
                             viewBox={`0 0 ${sparklineAI.width} ${sparklineAI.height}`}
                             aria-label={`${stock.symbol} AI Direction forecast`}
                           >
-                            <path d={sparklineAI.areaPath} className="mini-sparkline-area" style={{ fill: 'var(--primary-glow)', opacity: 0.1 }} />
-                            <path d={sparklineAI.linePath} className="mini-sparkline-line" style={{ stroke: 'var(--primary-cyan)' }} />
+                            <defs>
+                              <linearGradient id="aiDirectionGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#ECFEFF" stopOpacity="0.9" />
+                                <stop offset="100%" stopColor="#DBEAFE" stopOpacity="0.1" />
+                              </linearGradient>
+                            </defs>
+                            <path
+                              d={sparklineAI.areaPath}
+                              className="mini-sparkline-area"
+                              style={{ fill: 'url(#aiDirectionGradient)' }}
+                            />
+                            <path
+                              d={sparklineAI.linePath}
+                              className="mini-sparkline-line"
+                              style={{ stroke: '#22C55E' }}
+                            />
                           </svg>
                         ) : (
                           <span className="sparkline-empty">--</span>

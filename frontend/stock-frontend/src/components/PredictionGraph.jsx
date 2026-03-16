@@ -231,22 +231,17 @@ const PredictionGraph = ({ data }) => {
           <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Professional Chart Analysis</p>
         </div>
 
-        <div className="flex gap-2 flex-wrap items-center">
+        <div
+          className="flex gap-2 flex-wrap items-center px-2 py-1 rounded-full"
+          style={{ background: 'var(--bg-tertiary)' }}
+        >
           <button
             onClick={handleResetZoom}
-            className="px-4 py-2 rounded-lg text-xs font-bold transition-colors border"
+            className="px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors"
             style={{
-              background: 'var(--bg-tertiary)',
+              background: 'var(--bg-card)',
               color: 'var(--text-secondary)',
-              borderColor: 'var(--border-primary)'
-            }}
-            onMouseEnter={(e) => {
-              e.target.style.background = 'var(--bg-card)';
-              e.target.style.color = 'var(--text-primary)';
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.background = 'var(--bg-tertiary)';
-              e.target.style.color = 'var(--text-secondary)';
+              borderColor: 'var(--border-primary)',
             }}
           >
             Reset View
@@ -256,7 +251,7 @@ const PredictionGraph = ({ data }) => {
 
           <button
             onClick={() => toggleModel("actual")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border ${
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
               visibleModels.actual
                 ? "text-white border-blue-600 shadow-md"
                 : ""
@@ -276,7 +271,7 @@ const PredictionGraph = ({ data }) => {
 
           <button
             onClick={() => toggleModel("lr")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border ${
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
               visibleModels.lr
                 ? "text-white border-orange-500 shadow-md"
                 : ""
@@ -296,7 +291,7 @@ const PredictionGraph = ({ data }) => {
 
           <button
             onClick={() => toggleModel("cnn")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border ${
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
               visibleModels.cnn
                 ? "text-white border-green-500 shadow-md"
                 : ""
@@ -316,7 +311,7 @@ const PredictionGraph = ({ data }) => {
 
           <button
             onClick={() => toggleModel("rnn")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border ${
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all border ${
               visibleModels.rnn
                 ? "text-white border-purple-500 shadow-md"
                 : ""
